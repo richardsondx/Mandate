@@ -426,6 +426,67 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             .ok_or_else(|| ApiError::not_found("provider"))
     }
 
+    pub fn disconnect_provider(
+        &self,
+        account_id: &str,
+        provider_id: &str,
+    ) -> Result<ProviderStatus, ApiError> {
+        let route = match provider_id {
+            "coinbase-cdp-wallet" => "fake-treasury",
+            "stripe-revenue" => "fake-revenue",
+            "lithic-card" => "fake-card",
+            _ => return Err(ApiError::invalid("unknown bundled provider")),
+        };
+        let mut conn = self.db.lock().unwrap();
+        let tx = conn.transaction().map_err(db_err)?;
+        let mode = tx
+            .query_row(
+                "SELECT mode FROM provider_connections WHERE account_id=?1 AND provider_id=?2",
+                params![account_id, provider_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(|| ApiError::not_found("provider connection"))?;
+        if mode == "demo" {
+            let blocked: bool = tx
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM positions WHERE account_id=?1 AND provider=?2 AND (reserved != '0' OR pending != '0')",
+                    params![account_id, route],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            if blocked {
+                return Err(ApiError::new(
+                    "provider_in_use",
+                    "release reservations and settle pending activity before disconnecting this provider",
+                    false,
+                ));
+            }
+            tx.execute(
+                "DELETE FROM positions WHERE account_id=?1 AND provider=?2",
+                params![account_id, route],
+            )
+            .map_err(db_err)?;
+        }
+        tx.execute(
+            "DELETE FROM provider_connections WHERE account_id=?1 AND provider_id=?2",
+            params![account_id, provider_id],
+        )
+        .map_err(db_err)?;
+        Self::event_tx(
+            &tx,
+            "provider.disconnected",
+            serde_json::json!({"account_id":account_id,"provider_id":provider_id}),
+        )?;
+        tx.commit().map_err(db_err)?;
+        drop(conn);
+        self.providers_for(account_id)
+            .into_iter()
+            .find(|provider| provider.id == provider_id)
+            .ok_or_else(|| ApiError::not_found("provider"))
+    }
+
     pub fn create_agent(&self, req: AgentCreateRequest) -> Result<AgentCredential, ApiError> {
         let conn = self.db.lock().unwrap();
         let agent_id = format!("agt_{}", Uuid::new_v4().simple());
@@ -1497,5 +1558,21 @@ mod tests {
                 .code,
             "forbidden"
         );
+    }
+
+    #[test]
+    fn disconnecting_demo_provider_removes_only_its_idle_position() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s
+            .initialize_instance("Owner", "Studio", "Treasury", false)
+            .unwrap();
+        s.connect_demo_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        assert_eq!(s.balance(&init.account.id).unwrap().positions.len(), 1);
+        let status = s
+            .disconnect_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        assert_eq!(status.state, "not_connected");
+        assert!(s.balance(&init.account.id).unwrap().positions.is_empty());
     }
 }

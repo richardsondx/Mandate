@@ -67,6 +67,10 @@ pub fn router(service: MandateService) -> Router {
         .route("/v1/admin/accounts", get(accounts).post(create_account))
         .route("/v1/admin/profile", post(update_profile))
         .route("/v1/admin/provider-connections", post(connect_provider))
+        .route(
+            "/v1/admin/provider-connections/{provider_id}",
+            axum::routing::delete(disconnect_provider),
+        )
         .route("/v1/admin/agents", post(create_agent))
         .route("/v1/admin/agents/connect", post(connect_agent))
         .route("/v1/admin/agents/{id}/revoke", post(revoke_agent))
@@ -617,6 +621,35 @@ async fn connect_provider(
         state: status.state,
         ..status
     }))
+}
+
+#[derive(Deserialize)]
+struct ProviderDisconnectQuery {
+    account_id: String,
+}
+
+async fn disconnect_provider(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(provider_id): Path<String>,
+    Query(query): Query<ProviderDisconnectQuery>,
+) -> Result<Json<ProviderStatus>, ApiErrorResponse> {
+    auth(&s, &headers, true, None, None, true)?;
+    let status = s
+        .service
+        .disconnect_provider(&query.account_id, &provider_id)?;
+    delete_provider_config(&query.account_id, &provider_id);
+    Ok(Json(status))
+}
+
+fn delete_provider_config(account_id: &str, provider_id: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let service = format!("com.mandate.provider.{account_id}.{provider_id}");
+        let _ = Command::new("security")
+            .args(["delete-generic-password", "-s", &service, "-a", provider_id])
+            .status();
+    }
 }
 
 fn provider_entry(provider_id: &str) -> Result<std::path::PathBuf, ApiError> {

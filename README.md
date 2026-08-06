@@ -139,6 +139,11 @@ reconciliation are accepted, that state is labeled **Credentials verified**;
 it does not enable money movement. Mandate never combines test and live
 positions into one balance.
 
+The regular Capabilities setup connects provider Test/Sandbox or Live
+credentials; it does not offer a one-click demo balance. Illustrative demo data
+belongs to the explicit preview, while deterministic demo routes remain
+available to automated acceptance tests and developer tooling.
+
 Live-provider activation remains unavailable until operation dispatch,
 reconciliation, and each gate in `docs/PROVIDER_ACTIVATION.md` have passed.
 

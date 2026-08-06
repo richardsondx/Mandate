@@ -34,6 +34,12 @@ positions remain separate. Network or authentication failure shows an
 offline/locked gate with no sample financial values. Fixture data is reachable
 only through an explicit demo-preview action.
 
+Normal provider setup now accepts only provider Test/Sandbox or Live
+credentials. Deterministic demo connections remain a protocol/test capability
+for automated acceptance, but are not offered in the regular account setup UI.
+Connected providers can be disconnected with explicit confirmation; idle demo
+positions are removed while historical journal entries are preserved.
+
 ## Product surfaces
 
 - [x] Rust `mandated` daemon bound to `127.0.0.1:7741`
@@ -135,7 +141,8 @@ only through an explicit demo-preview action.
 - [x] Fresh-user setup → empty account → category provider setup → second-account isolation browser smoke test
 - [x] In-app Browser and Chrome verification of capabilities, profile/account menus, Hermes discovery, and diagnostics layout
 - [x] Initial browser visual QA for light/dark/reduced-motion
-- [x] Category-specific provider dialogs and explicit disconnected states
+  - [x] Category-specific provider dialogs and explicit disconnected states
+  - [x] Provider disconnect confirmation and account-scoped cleanup
 - [ ] Golden REST/CLI/MCP parity suite covering every failure state
 - [ ] Playwright end-to-end suite for all dashboard mutations
 - [ ] Axe and screen-reader release audit
