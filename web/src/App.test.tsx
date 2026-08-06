@@ -16,7 +16,7 @@ const snapshot = {
     administrator_name: 'Alex Rivera',
     accounts: [{ id: 'acct_1', name: 'Primary treasury' }],
     account: { id: 'acct_1', name: 'Primary treasury' },
-    balance: { positions: [], estimated_at: '2026-08-06T12:00:00Z' },
+    balance: { positions: [], estimated_usd_atomic: null, estimated_at: '2026-08-06T12:00:00Z' },
     transactions: { data: [] },
     agents: [],
     providers: [

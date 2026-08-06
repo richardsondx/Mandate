@@ -8,6 +8,32 @@ provider has approved production use.
 Status key: `[x]` complete, `[~]` partial, `[ ]` not implemented, `[!]` blocked
 by an external production dependency.
 
+Visual cue: `✅` integrated and verified, `🟡` partial, `🔴` not integrated,
+`⛔` externally blocked.
+
+## User-visible integration map
+
+| Surface | State | Source of truth | Remaining gap |
+|---|---:|---|---|
+| First-run onboarding | ✅ | `/v1/setup/status`, `/v1/setup`, encrypted DB | Native installer acceptance |
+| Empty Overview | ✅ | Account-scoped providers, positions, agents, journal | None for local zero-state |
+| Account balances | 🟡 | Exact positions from `/v1/dashboard` | Valuation feed; no synthetic cross-asset total |
+| Activity and ledger | ✅ | Immutable journal transactions and entries | Provider reconciliation workers |
+| Agent grants | ✅ | Grants, credential hashes, runtime install records | Credential rotation UI |
+| Capabilities | 🟡 | Provider catalog and account-scoped connections | External operation dispatch |
+| System | 🟡 | Daemon diagnostics endpoint | Recovery export and scheduled reconciliation |
+| Demo preview | ✅ | Explicit `web/src/lib/fixtures.ts` only | Never used as an error fallback |
+| Coinbase operations | 🔴 | Adapter credential validation only | Persistent dispatch and reconciliation |
+| Stripe operations | 🔴 | Adapter credential validation only | Persistent dispatch and reconciliation |
+| Lithic operations | 🔴 | Adapter credential validation only | Secret-safe dispatch and settlement |
+| Hermes | ✅ | Supported Hermes CLI plus scoped MCP probe | None on the reference Mac |
+| OpenClaw | ⛔ | Connector path implemented | Runtime unavailable for acceptance |
+
+`estimated_usd_atomic = null` renders as no valuation. Exact USD and USDC
+positions remain separate. Network or authentication failure shows an
+offline/locked gate with no sample financial values. Fixture data is reachable
+only through an explicit demo-preview action.
+
 ## Product surfaces
 
 - [x] Rust `mandated` daemon bound to `127.0.0.1:7741`

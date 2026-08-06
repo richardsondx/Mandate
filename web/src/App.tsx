@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Activity as ActivityIcon,
   ArrowDownLeft,
@@ -30,7 +30,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react'
-import { initializeInstance, loadDashboard, type DataSource } from './lib/api'
+import { emptyData, initializeInstance, loadDashboard, type DataSource } from './lib/api'
 import { fixtureData } from './lib/fixtures'
 import type { Agent, DashboardData, EconomicAccount, NavId, Provider, Transaction } from './lib/types'
 import { ArrowAction, FlowLine, LogoMark, Pill, RowAction, SectionHeading, formatAtomic } from './components/ui'
@@ -46,7 +46,7 @@ const NAV: { id: NavId; label: string; icon: typeof Gauge }[] = [
 ]
 
 function EnvironmentBadge({ source, onClick }: { source: DataSource; onClick: () => void }) {
-  const label = source === 'daemon' ? 'Local daemon' : source === 'preview' ? 'Demo preview' : source === 'locked' ? 'Locked' : 'Setup'
+  const label = source === 'daemon' ? 'Local daemon' : source === 'preview' ? 'Demo preview' : source === 'locked' ? 'Locked' : source === 'offline' ? 'Daemon offline' : 'Setup'
   const tone = source === 'daemon' ? 'state-chip--connected' : source === 'locked' ? 'state-chip--pending' : 'state-chip--sandbox'
   return <div className="environment-badge"><button className="mode-button" onClick={onClick}><span className={`state-chip ${tone}`}><span className="state-dot" />{label}</span><ChevronDown size={13} /></button></div>
 }
@@ -122,7 +122,7 @@ function Overview({ data, source, navigate, newOperation }: { data: DashboardDat
   const connectedProviders = data.providers.filter(provider => provider.status !== 'disconnected')
   const flowStages = [
     { name: 'Receive', value: connectedProviders.some(provider => provider.category === 'Receive') ? 'Ready' : 'Not connected', detail: 'Provider route' },
-    { name: 'Hold', value: `$${data.estimateUsd}`, detail: `${data.positions.length} positions` },
+    { name: 'Hold', value: data.estimateUsd === '—' ? 'See positions' : `$${data.estimateUsd}`, detail: `${data.positions.length} positions` },
     { name: 'Spend', value: `$${reserved.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, detail: 'Currently reserved' },
     { name: 'Reinvest', value: 'Explicit', detail: 'No auto-routing' },
   ]
@@ -134,12 +134,12 @@ function Overview({ data, source, navigate, newOperation }: { data: DashboardDat
   </div>
   return (
     <div className="page page-enter">
-      <PageIntro kicker="Thursday, August 6" title="Economic continuity, at a glance." description="One account across every rail your agents use." actions={<button className="primary-button" onClick={newOperation}><Plus size={15} /> New operation</button>} />
+      <PageIntro kicker={new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())} title="Economic continuity, at a glance." description="One account across every rail your agents use." actions={<button className="primary-button" onClick={newOperation}><Plus size={15} /> New operation</button>} />
       <section className="hero-balance">
         <div className="balance-copy">
           <div className="balance-label"><span>Estimated account value</span><Pill tone="neutral">USD estimate</Pill></div>
-          <div className="big-amount"><sup>$</sup>{data.estimateUsd}</div>
-          <p>{source === 'daemon' ? 'Local provider test positions' : 'Illustrative preview'} <span aria-hidden="true">·</span> Valued {data.valuationAt}</p>
+          <div className="big-amount">{data.estimateUsd === '—' ? '—' : <><sup>$</sup>{data.estimateUsd}</>}</div>
+          <p>{data.estimateUsd === '—' ? 'No consolidated valuation is available; review each provider position.' : `${source === 'daemon' ? 'Provider positions' : 'Illustrative preview'} · Valued ${data.valuationAt}`}</p>
         </div>
         <button className="balance-link" onClick={() => navigate('account')}>View positions <ArrowUpRight size={15} /></button>
         <FlowLine stages={flowStages} />
@@ -177,19 +177,15 @@ function Overview({ data, source, navigate, newOperation }: { data: DashboardDat
 }
 
 function Account({ data, explainAccounting, newOperation, fundAccount, reconcile }: { data: DashboardData; explainAccounting: () => void; newOperation: () => void; fundAccount: () => void; reconcile: () => void }) {
-  const totals = useMemo(() => {
-    const sum = (field: 'available' | 'reserved' | 'pending') => data.positions.reduce((value, position) => value + Number(position[field]) / (10 ** position.decimals), 0)
-    return { available: `$${sum('available').toLocaleString(undefined, { minimumFractionDigits: 2 })}`, reserved: `$${sum('reserved').toLocaleString(undefined, { minimumFractionDigits: 2 })}`, pending: `$${sum('pending').toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
-  }, [data.positions])
   if (data.positions.length === 0) return <div className="page page-enter"><PageIntro kicker="Economic account" title={data.accountName} description="No provider positions have been created for this account yet." /><section className="panel account-empty"><WalletCards size={24} /><h2>No balances or reservations</h2><p>Connect a provider route from Capabilities. A position appears only after that account has a real or demo rail.</p></section><div className="callout"><ShieldCheck size={20} /><div><strong>This is a clean account.</strong><p>Agents, providers, and ledger entries from other economic accounts are not visible here.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div></div>
   return (
     <div className="page page-enter">
       <PageIntro kicker="Economic account" title={data.accountName} description="Every provider position, reconciled without pretending the rails are interchangeable." actions={<><button className="secondary-button" onClick={reconcile}><RefreshCw size={15} /> Refresh ledger</button><button className="secondary-button" onClick={fundAccount}>Fund account</button><button className="primary-button" onClick={newOperation}>Move money</button></>} />
       <div className="metric-strip">
-        <div><span>Estimated value</span><strong>${data.estimateUsd}</strong><small>USD · {data.valuationAt}</small></div>
-        <div><span>Available</span><strong>{totals.available}</strong><small>Across {data.positions.length} {data.positions.length === 1 ? 'position' : 'positions'}</small></div>
-        <div><span>Reserved</span><strong>{totals.reserved}</strong><small>{data.positions.some(position => BigInt(position.reserved) > 0n) ? 'Active reservations' : 'No active reservations'}</small></div>
-        <div><span>Pending</span><strong>{totals.pending}</strong><small>{data.positions.some(position => BigInt(position.pending) > 0n) ? 'Awaiting provider settlement' : 'Nothing pending'}</small></div>
+        <div><span>Estimated value</span><strong>{data.estimateUsd === '—' ? '—' : `$${data.estimateUsd}`}</strong><small>{data.estimateUsd === '—' ? 'No valuation feed configured' : `USD · ${data.valuationAt}`}</small></div>
+        <div><span>Positions</span><strong>{data.positions.length}</strong><small>Never netted across rails</small></div>
+        <div><span>Reserved positions</span><strong>{data.positions.filter(position => BigInt(position.reserved) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.reserved) > 0n) ? 'Inspect amounts below' : 'No active reservations'}</small></div>
+        <div><span>Pending positions</span><strong>{data.positions.filter(position => BigInt(position.pending) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.pending) > 0n) ? 'Inspect amounts below' : 'Nothing pending'}</small></div>
       </div>
       <section className="panel positions-panel">
         <SectionHeading eyebrow="Underlying positions" title="Where value actually lives" action={<Pill tone="positive"><Check size={12} /> Reconciled</Pill>} />
@@ -274,7 +270,7 @@ function Agents({ data, connect, manage, reviewDetected }: { data: DashboardData
   return (
     <div className="page page-enter">
       <PageIntro kicker="Scoped operators" title="Agents" description="Give each runtime only the authority and economic account it needs." actions={<button className="primary-button" onClick={connect}><Plus size={15} /> Connect agent</button>} />
-      <div className="agent-summary"><div><Bot size={19} /><span><strong>{data.agents.length} connected</strong><small>{data.agents.length ? 'Scoped identities' : 'No active grants'}</small></span></div><div><ShieldCheck size={19} /><span><strong>Least privilege</strong><small>Every grant is account-scoped</small></span></div><div><KeyRound size={19} /><span><strong>Credential files</strong><small>Stored outside prompt context</small></span></div></div>
+      <div className="agent-summary"><div><Bot size={19} /><span><strong>{data.agents.length} scoped</strong><small>{data.agents.length ? `${data.agents.filter(agent => agent.installationStatus === 'installed').length} runtime integrations installed` : 'No active grants'}</small></span></div><div><ShieldCheck size={19} /><span><strong>Least privilege</strong><small>Every grant is account-scoped</small></span></div><div><KeyRound size={19} /><span><strong>Credential files</strong><small>Stored outside prompt context</small></span></div></div>
       <section className="panel agents-panel">
         <div className="list-heading"><span>Agent</span><span>Capabilities</span><span>Last seen</span><span /></div>
         {data.agents.length ? data.agents.map(agent => <AgentRow key={agent.id} agent={agent} onMore={manage} />) : <div className="empty-dialog"><Bot size={22} /><h3>No agents assigned to this account</h3><p>Connect OpenClaw or Hermes with an account-scoped identity and explicit capability grant.</p><button className="primary-button" onClick={connect}>Connect an agent</button></div>}
@@ -369,8 +365,8 @@ function AccessGate({ onPreview }: { onPreview: () => void }) {
 
 export function App() {
   const [page, setPage] = useState<NavId>('overview')
-  const [data, setData] = useState<DashboardData>(fixtureData)
-  const [source, setSource] = useState<DataSource>('preview')
+  const [data, setData] = useState<DashboardData>(() => emptyData())
+  const [source, setSource] = useState<DataSource>('offline')
   const [loading, setLoading] = useState(true)
   const [selectedAccountId, setSelectedAccountId] = useState('')
   const [toast, setToast] = useState('')
@@ -419,6 +415,7 @@ export function App() {
   if (loading) return <div className="app-loading"><LogoMark /><span>Opening Mandate…</span></div>
   if (source === 'uninitialized') return <FirstRun detected={data.detectedRuntimes} onInitialized={returnToRealState} onPreview={preview} />
   if (source === 'locked') return <AccessGate onPreview={preview} />
+  if (source === 'offline') return <div className="onboarding access-gate"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="danger">Daemon offline</Pill></header><main><section className="onboarding-card"><div className="onboarding-copy"><p className="eyebrow">Local runtime unavailable</p><h1>Start Mandate to continue.</h1><p>The dashboard could not reach the local daemon. No preview or sample financial data has been substituted.</p><pre className="setup-command">cargo run -p mandated</pre><button className="secondary-button" onClick={() => setRefreshVersion(version => version + 1)}>Try again</button><button className="secondary-button" onClick={preview}>View explicit demo preview</button></div><div className="onboarding-visual"><div className="security-visual"><Server size={42} /><small>Waiting for 127.0.0.1:7741</small></div></div></section></main></div>
 
   return (
     <Shell page={page} onNavigate={navigate} source={source} data={data} openSetup={source === 'preview' ? returnToRealState : () => setDialog({ type: 'setup' })} openCommand={() => setDialog({ type: 'command' })} openEnvironment={() => setDialog({ type: 'environment' })} editProfile={() => setDialog({ type: 'profile' })} selectAccount={selectAccount} createAccount={() => setDialog({ type: 'account' })}>

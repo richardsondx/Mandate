@@ -1,7 +1,6 @@
-import { fixtureData } from './fixtures'
 import type { DashboardData, DiagnosticCheck, Transaction } from './types'
 
-export type DataSource = 'daemon' | 'preview' | 'uninitialized' | 'locked'
+export type DataSource = 'daemon' | 'preview' | 'uninitialized' | 'locked' | 'offline'
 
 let csrfToken: string | null = null
 let eventCursor = 0
@@ -17,6 +16,7 @@ type SnapshotResponse = {
     account: { id: string; name: string }
     balance: {
       positions: Array<{ provider: string; asset: string; network?: string; available: string; reserved: string; pending: string; settled: string; decimals: number; reconciled_at: string }>
+      estimated_usd_atomic: string | null
       estimated_at: string
     }
     transactions: {
@@ -92,11 +92,6 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
   const { snapshot } = response
   eventCursor = Math.max(eventCursor, snapshot.outbox_cursor)
   const decimalsByAsset = new Map(snapshot.balance.positions.map(position => [position.asset, position.decimals]))
-  const estimatedCents = snapshot.balance.positions.reduce((sum, position) => {
-    const atomic = BigInt(position.available) + BigInt(position.reserved) + BigInt(position.pending)
-    const scale = BigInt(10) ** BigInt(position.decimals)
-    return sum + Number((atomic * BigInt(100)) / scale)
-  }, 0)
   const transactions: Transaction[] = snapshot.transactions.data.map(record => {
     const decimals = decimalsByAsset.get(record.asset) ?? (record.asset === 'USDC' ? 6 : 2)
     const first = record.entries[0]?.amount_atomic ?? '0'
@@ -125,7 +120,9 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
     accounts: snapshot.accounts,
     accountId: snapshot.account.id,
     accountName: snapshot.account.name,
-    estimateUsd: (estimatedCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    estimateUsd: snapshot.balance.estimated_usd_atomic === null
+      ? '—'
+      : formatAtomicValue(snapshot.balance.estimated_usd_atomic, 2),
     valuationAt: new Date(snapshot.balance.estimated_at).toLocaleString(),
     outboxCursor: String(snapshot.outbox_cursor),
     detectedRuntimes: snapshot.runtimes,
@@ -150,7 +147,7 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
       mode: agent.authority,
       capabilities: agent.capabilities,
       lastSeen: new Date(agent.created_at).toLocaleString(),
-      status: 'connected',
+      status: agent.installation_status === 'installed' ? 'connected' : agent.installation_status === 'failed' ? 'attention' : 'offline',
       installationStatus: agent.installation_status,
       installationDetail: agent.installation_detail,
     })),
@@ -171,9 +168,8 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
   }
 }
 
-function emptyData(runtimes: RuntimeDetection): DashboardData {
+export function emptyData(runtimes: RuntimeDetection = { openclaw: false, hermes: false }): DashboardData {
   return {
-    ...fixtureData,
     principalName: '',
     administratorName: '',
     accounts: [],
@@ -185,7 +181,10 @@ function emptyData(runtimes: RuntimeDetection): DashboardData {
     transactions: [],
     agents: [],
     providers: Object.entries(PROVIDERS).map(([id, provider]) => ({ id, ...provider, capabilities: [], status: 'disconnected' as const, detail: 'No route connected' })),
+    outboxCursor: '0',
     detectedRuntimes: runtimes,
+    version: 'Unavailable',
+    startedAt: 'Unavailable',
     diagnostics: [],
   }
 }
@@ -198,7 +197,7 @@ export async function loadDashboard(signal?: AbortSignal, accountId?: string): P
     if (!status.initialized) return { data: emptyData(status.runtimes), source: 'uninitialized' }
     const query = accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''
     const response = await fetch(`/v1/dashboard${query}`, { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal })
-    if (response.status === 401) return { data: fixtureData, source: 'locked' }
+    if (response.status === 401) return { data: emptyData(status.runtimes), source: 'locked' }
     if (!response.ok) throw new Error(`Daemon returned ${response.status}`)
     const [body, diagnosticsResponse] = await Promise.all([
       response.json() as Promise<SnapshotResponse>,
@@ -209,7 +208,7 @@ export async function loadDashboard(signal?: AbortSignal, accountId?: string): P
     return { data: mapSnapshot(body, diagnostics), source: 'daemon' }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
-    return { data: fixtureData, source: 'preview' }
+    return { data: emptyData(), source: 'offline' }
   }
 }
 

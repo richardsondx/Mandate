@@ -67,6 +67,17 @@ administrator name, organization/principal, and first economic account. Choose
 **Start empty** for the real zero-state setup or **Add demo routes** for an
 explicit deterministic demonstration. Browser setup is required only once.
 
+To repeat the genuine first-run experience during development, use the guarded
+reset helper. It stops only a process identified as `mandated`, moves the full
+local data directory into a timestamped backup, and removes the obsolete admin
+login credential. It retains the database encryption key so the backup remains
+recoverable.
+
+```bash
+./scripts/reset-local-instance.sh --confirm-reset
+cargo run -p mandated
+```
+
 The CLI remains available for headless initialization:
 
 ```bash
