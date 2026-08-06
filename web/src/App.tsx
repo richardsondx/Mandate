@@ -34,7 +34,7 @@ import { initializeInstance, loadDashboard, type DataSource } from './lib/api'
 import { fixtureData } from './lib/fixtures'
 import type { Agent, DashboardData, EconomicAccount, NavId, Provider, Transaction } from './lib/types'
 import { ArrowAction, FlowLine, LogoMark, Pill, RowAction, SectionHeading, formatAtomic } from './components/ui'
-import { AccountDialog, AccountingDialog, AgentDialog, CommandDialog, EnvironmentDialog, LedgerDialog, OperationDialog, ProviderDialog, type ProviderCategory } from './components/dialogs'
+import { AccountDialog, AccountingDialog, AgentDialog, CommandDialog, EnvironmentDialog, LedgerDialog, OperationDialog, ProfileDialog, ProviderDialog, SetupChecklistDialog, type ProviderCategory } from './components/dialogs'
 
 const NAV: { id: NavId; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Overview', icon: Gauge },
@@ -46,7 +46,7 @@ const NAV: { id: NavId; label: string; icon: typeof Gauge }[] = [
 ]
 
 function EnvironmentBadge({ source, onClick }: { source: DataSource; onClick: () => void }) {
-  const label = source === 'daemon' ? 'Connected' : source === 'preview' ? 'Demo preview' : source === 'locked' ? 'Locked' : 'Setup'
+  const label = source === 'daemon' ? 'Local daemon' : source === 'preview' ? 'Demo preview' : source === 'locked' ? 'Locked' : 'Setup'
   const tone = source === 'daemon' ? 'state-chip--connected' : source === 'locked' ? 'state-chip--pending' : 'state-chip--sandbox'
   return <div className="environment-badge"><button className="mode-button" onClick={onClick}><span className={`state-chip ${tone}`}><span className="state-dot" />{label}</span><ChevronDown size={13} /></button></div>
 }
@@ -55,7 +55,7 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'M'
 }
 
-function Shell({ page, onNavigate, source, data, children, openSetup, openCommand, openEnvironment, selectAccount, createAccount }: { page: NavId; onNavigate: (id: NavId) => void; source: DataSource; data: DashboardData; children: React.ReactNode; openSetup: () => void; openCommand: () => void; openEnvironment: () => void; selectAccount: (id: string) => void; createAccount: () => void }) {
+function Shell({ page, onNavigate, source, data, children, openSetup, openCommand, openEnvironment, editProfile, selectAccount, createAccount }: { page: NavId; onNavigate: (id: NavId) => void; source: DataSource; data: DashboardData; children: React.ReactNode; openSetup: () => void; openCommand: () => void; openEnvironment: () => void; editProfile: () => void; selectAccount: (id: string) => void; createAccount: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -83,7 +83,7 @@ function Shell({ page, onNavigate, source, data, children, openSetup, openComman
           <button className="profile-button" onClick={() => { setProfileOpen(open => !open); setAccountOpen(false) }} aria-expanded={profileOpen}>
             <span className="avatar">{initials(data.administratorName)}</span><span><strong>{data.administratorName}</strong><small>{data.principalName}</small></span><MoreHorizontal size={16} />
           </button>
-          {profileOpen && <div className="profile-menu"><p className="eyebrow">Administrator</p><strong>{data.administratorName}</strong><small>{data.principalName} · {source === 'daemon' ? 'local-only session' : 'illustrative preview'}</small>{source === 'daemon' && <button onClick={() => { setProfileOpen(false); createAccount() }}><Plus size={13} /> Create account</button>}<button onClick={() => { setProfileOpen(false); openEnvironment() }}>Provider environments <ArrowUpRight size={13} /></button><button onClick={() => { setProfileOpen(false); openSetup() }}>{source === 'preview' ? 'Exit demo preview' : 'Account setup checklist'} <ArrowUpRight size={13} /></button><button onClick={() => { setProfileOpen(false); onNavigate('system') }}>System diagnostics <ArrowUpRight size={13} /></button></div>}
+          {profileOpen && <div className="profile-menu"><p className="eyebrow">Local operator</p><strong>{data.administratorName}</strong><small>{data.principalName} · {source === 'daemon' ? 'this Mac only' : 'illustrative preview'}</small>{source === 'daemon' && <button onClick={() => { setProfileOpen(false); editProfile() }}>Edit local profile <ArrowUpRight size={13} /></button>}<button onClick={() => { setProfileOpen(false); openEnvironment() }}>Local connection <ArrowUpRight size={13} /></button><button onClick={() => { setProfileOpen(false); openSetup() }}>{source === 'preview' ? 'Exit demo preview' : 'Account setup checklist'} <ArrowUpRight size={13} /></button><button onClick={() => { setProfileOpen(false); onNavigate('system') }}>System diagnostics <ArrowUpRight size={13} /></button></div>}
         </div>
       </aside>
       {mobileOpen && <button className="scrim" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
@@ -176,7 +176,7 @@ function Overview({ data, source, navigate, newOperation }: { data: DashboardDat
   )
 }
 
-function Account({ data, explainAccounting, newOperation, reconcile }: { data: DashboardData; explainAccounting: () => void; newOperation: () => void; reconcile: () => void }) {
+function Account({ data, explainAccounting, newOperation, fundAccount, reconcile }: { data: DashboardData; explainAccounting: () => void; newOperation: () => void; fundAccount: () => void; reconcile: () => void }) {
   const totals = useMemo(() => {
     const sum = (field: 'available' | 'reserved' | 'pending') => data.positions.reduce((value, position) => value + Number(position[field]) / (10 ** position.decimals), 0)
     return { available: `$${sum('available').toLocaleString(undefined, { minimumFractionDigits: 2 })}`, reserved: `$${sum('reserved').toLocaleString(undefined, { minimumFractionDigits: 2 })}`, pending: `$${sum('pending').toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
@@ -184,12 +184,12 @@ function Account({ data, explainAccounting, newOperation, reconcile }: { data: D
   if (data.positions.length === 0) return <div className="page page-enter"><PageIntro kicker="Economic account" title={data.accountName} description="No provider positions have been created for this account yet." /><section className="panel account-empty"><WalletCards size={24} /><h2>No balances or reservations</h2><p>Connect a provider route from Capabilities. A position appears only after that account has a real or demo rail.</p></section><div className="callout"><ShieldCheck size={20} /><div><strong>This is a clean account.</strong><p>Agents, providers, and ledger entries from other economic accounts are not visible here.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div></div>
   return (
     <div className="page page-enter">
-      <PageIntro kicker="Economic account" title={data.accountName} description="Every provider position, reconciled without pretending the rails are interchangeable." actions={<><button className="secondary-button" onClick={reconcile}><RefreshCw size={15} /> Refresh ledger</button><button className="primary-button" onClick={newOperation}>Transfer</button></>} />
+      <PageIntro kicker="Economic account" title={data.accountName} description="Every provider position, reconciled without pretending the rails are interchangeable." actions={<><button className="secondary-button" onClick={reconcile}><RefreshCw size={15} /> Refresh ledger</button><button className="secondary-button" onClick={fundAccount}>Fund account</button><button className="primary-button" onClick={newOperation}>Move money</button></>} />
       <div className="metric-strip">
         <div><span>Estimated value</span><strong>${data.estimateUsd}</strong><small>USD · {data.valuationAt}</small></div>
-        <div><span>Available</span><strong>{totals.available}</strong><small>Across 3 positions</small></div>
-        <div><span>Reserved</span><strong>{totals.reserved}</strong><small>1 active payment</small></div>
-        <div><span>Pending</span><strong>{totals.pending}</strong><small>Revenue + chain finality</small></div>
+        <div><span>Available</span><strong>{totals.available}</strong><small>Across {data.positions.length} {data.positions.length === 1 ? 'position' : 'positions'}</small></div>
+        <div><span>Reserved</span><strong>{totals.reserved}</strong><small>{data.positions.some(position => BigInt(position.reserved) > 0n) ? 'Active reservations' : 'No active reservations'}</small></div>
+        <div><span>Pending</span><strong>{totals.pending}</strong><small>{data.positions.some(position => BigInt(position.pending) > 0n) ? 'Awaiting provider settlement' : 'Nothing pending'}</small></div>
       </div>
       <section className="panel positions-panel">
         <SectionHeading eyebrow="Underlying positions" title="Where value actually lives" action={<Pill tone="positive"><Check size={12} /> Reconciled</Pill>} />
@@ -376,7 +376,7 @@ export function App() {
   const [toast, setToast] = useState('')
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [dialog, setDialog] = useState<
-    | { type: 'operation' }
+    | { type: 'operation'; kind?: string }
     | { type: 'accounting' }
     | { type: 'ledger'; transaction: Transaction }
     | { type: 'provider'; provider?: Provider; category?: ProviderCategory }
@@ -384,6 +384,8 @@ export function App() {
     | { type: 'command' }
     | { type: 'environment' }
     | { type: 'account' }
+    | { type: 'setup' }
+    | { type: 'profile' }
     | null
   >(null)
 
@@ -419,15 +421,15 @@ export function App() {
   if (source === 'locked') return <AccessGate onPreview={preview} />
 
   return (
-    <Shell page={page} onNavigate={navigate} source={source} data={data} openSetup={source === 'preview' ? returnToRealState : () => navigate('overview')} openCommand={() => setDialog({ type: 'command' })} openEnvironment={() => setDialog({ type: 'environment' })} selectAccount={selectAccount} createAccount={() => setDialog({ type: 'account' })}>
+    <Shell page={page} onNavigate={navigate} source={source} data={data} openSetup={source === 'preview' ? returnToRealState : () => setDialog({ type: 'setup' })} openCommand={() => setDialog({ type: 'command' })} openEnvironment={() => setDialog({ type: 'environment' })} editProfile={() => setDialog({ type: 'profile' })} selectAccount={selectAccount} createAccount={() => setDialog({ type: 'account' })}>
       {page === 'overview' && <Overview data={data} source={source} navigate={navigate} newOperation={() => setDialog({ type: 'operation' })} />}
-      {page === 'account' && <Account data={data} explainAccounting={() => setDialog({ type: 'accounting' })} newOperation={() => setDialog({ type: 'operation' })} reconcile={() => { setRefreshVersion(version => version + 1); setToast('Ledger snapshot refreshed') }} />}
+      {page === 'account' && <Account data={data} explainAccounting={() => setDialog({ type: 'accounting' })} newOperation={() => setDialog({ type: 'operation' })} fundAccount={() => setDialog({ type: 'operation', kind: 'receive' })} reconcile={() => { setRefreshVersion(version => version + 1); setToast('Ledger snapshot refreshed') }} />}
       {page === 'activity' && <Activity data={data} viewLedger={transaction => setDialog({ type: 'ledger', transaction })} />}
       {page === 'agents' && <Agents data={data} connect={() => setDialog({ type: 'agent' })} manage={agent => setDialog({ type: 'agent', agent })} reviewDetected={() => setDialog({ type: 'agent', runtime: data.detectedRuntimes.hermes && !data.detectedRuntimes.openclaw ? 'hermes' : 'openclaw' })} />}
       {page === 'capabilities' && <Capabilities data={data} configure={provider => setDialog({ type: 'provider', provider })} addProvider={category => setDialog({ type: 'provider', category })} />}
       {page === 'system' && <System data={data} source={source} notify={setToast} refresh={() => setRefreshVersion(version => version + 1)} />}
       {toast && <div className="toast" role="status"><Check size={15} />{toast}</div>}
-      {dialog?.type === 'operation' && <OperationDialog accountId={data.accountId} source={source} onClose={() => setDialog(null)} onComplete={completed} />}
+      {dialog?.type === 'operation' && <OperationDialog accountId={data.accountId} source={source} initialKind={dialog.kind} onClose={() => setDialog(null)} onComplete={completed} />}
       {dialog?.type === 'accounting' && <AccountingDialog onClose={() => setDialog(null)} />}
       {dialog?.type === 'ledger' && <LedgerDialog transaction={dialog.transaction} onClose={() => setDialog(null)} />}
       {dialog?.type === 'provider' && <ProviderDialog accountId={data.accountId} providers={data.providers} provider={dialog.provider} category={dialog.category} source={source} onClose={() => setDialog(null)} onComplete={completed} />}
@@ -435,6 +437,8 @@ export function App() {
       {dialog?.type === 'command' && <CommandDialog onClose={() => setDialog(null)} navigate={navigate} newOperation={() => setDialog({ type: 'operation' })} />}
       {dialog?.type === 'environment' && <EnvironmentDialog onClose={() => setDialog(null)} />}
       {dialog?.type === 'account' && <AccountDialog onClose={() => setDialog(null)} onComplete={accountCreated} />}
+      {dialog?.type === 'setup' && <SetupChecklistDialog providers={data.providers} agents={data.agents} onClose={() => setDialog(null)} navigate={navigate} />}
+      {dialog?.type === 'profile' && <ProfileDialog administratorName={data.administratorName} principalName={data.principalName} onClose={() => setDialog(null)} onComplete={completed} />}
     </Shell>
   )
 }

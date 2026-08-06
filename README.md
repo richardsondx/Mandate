@@ -24,9 +24,11 @@ liquidity can already move automatically between providers.
 
 Mandate is an early open-source v0.1 implementation. The encrypted local
 runtime, CLI, MCP adapter, dashboard, account isolation, deterministic demo
-providers, agent grants, and double-entry ledger are functional. External
-Coinbase, Stripe, and Lithic credentials are **not enabled yet** because daemon
-provider-process supervision and production activation gates remain open.
+providers, agent grants, and double-entry ledger are functional. The dashboard
+can validate Coinbase, Stripe, and Lithic test/live credentials through the
+bundled out-of-process adapters and store their configuration in macOS
+Keychain. Provider-backed operation dispatch and reconciliation remain release
+gates, so verified credentials are shown as **Live ready**, not Live.
 
 See the [build ledger](docs/BUILD_LEDGER.md) for implemented scope and the
 [completion brief](docs/COMPLETION_BRIEF.md) for the definition of done.
@@ -118,17 +120,16 @@ setup. After initialization, `mandate dashboard` opens the authenticated local
 runtime. **Preview** fixture data is available only through an explicit demo
 action and is never mixed into an economic account.
 
-Provider environments are independent. In the MVP, the daemon-backed routes
-use deterministic test providers so the ledger, reservations, CLI, MCP, and UI
-can be exercised safely. When provider supervision is complete, Stripe,
-Coinbase, and Lithic can each be configured with their own test or live
-credentials. Mandate must never combine test and live positions into one
-balance, and “Connected” means the local daemon is authenticated—not that live
-money is active.
+Provider environments are independent. Deterministic demo routes exercise the
+ledger, reservations, CLI, MCP, and UI safely. Coinbase, Stripe, and Lithic
+credential forms now launch the bundled adapter, validate access, and store the
+configuration in Keychain. Until provider-backed operation dispatch and
+reconciliation are accepted, that state is labeled **Credentials verified**;
+it does not enable money movement. Mandate never combines test and live
+positions into one balance.
 
-Live-provider activation is unavailable until daemon provider supervision is
-wired and each provider activation gate in `docs/PROVIDER_ACTIVATION.md` has
-passed.
+Live-provider activation remains unavailable until operation dispatch,
+reconciliation, and each gate in `docs/PROVIDER_ACTIVATION.md` have passed.
 
 Track exact implementation status in [the v0.1 build ledger](docs/BUILD_LEDGER.md).
 The user-usable acceptance boundary is in [the completion brief](docs/COMPLETION_BRIEF.md).
@@ -140,6 +141,11 @@ provider connections, positions, reservations, journal entries, and grants.
 Multiple OpenClaw, Hermes, or custom agents may share one account, but every
 agent uses its own scoped credential. Create separate accounts whenever funds,
 provider routes, permissions, or audit history should not be shared.
+
+The bottom-left profile is the human operator for this local instance; it is
+not another economic account. Rename the operator or principal from **Edit
+local profile**. Create and switch economic accounts only from the account
+switcher at the top of the sidebar.
 
 ## Agent interfaces
 

@@ -15,7 +15,8 @@ use serde::Deserialize;
 use std::{
     collections::HashMap,
     convert::Infallible,
-    process::Command,
+    io::{BufRead, BufReader, Write},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex,
@@ -64,10 +65,13 @@ pub fn router(service: MandateService) -> Router {
         )
         .route("/v1/admin/providers", get(providers))
         .route("/v1/admin/accounts", get(accounts).post(create_account))
+        .route("/v1/admin/profile", post(update_profile))
         .route("/v1/admin/provider-connections", post(connect_provider))
         .route("/v1/admin/agents", post(create_agent))
         .route("/v1/admin/agents/connect", post(connect_agent))
         .route("/v1/admin/agents/{id}/revoke", post(revoke_agent))
+        .route("/v1/admin/agents/{id}", post(update_agent))
+        .route("/v1/admin/agents/{id}/install", post(install_agent))
         .route("/v1/admin/diagnostics", get(diagnostics))
         .route("/v1/admin/schema", get(schema))
         .with_state(Arc::new(AppState {
@@ -509,6 +513,13 @@ fn runtime_detected(name: &str) -> bool {
             .is_ok_and(|output| output.status.success())
 }
 
+fn integration_home() -> std::path::PathBuf {
+    std::env::var_os("MANDATE_INTEGRATION_HOME")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
 #[derive(Deserialize)]
 struct DashboardQuery {
     account_id: Option<String>,
@@ -562,24 +573,183 @@ async fn create_account(
     Ok(Json(s.service.create_account(&req.name)?))
 }
 
+async fn update_profile(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProfileUpdateRequest>,
+) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
+    auth(&s, &headers, true, None, None, true)?;
+    s.service.update_profile(req)?;
+    Ok(Json(serde_json::json!({"status":"updated"})))
+}
+
 async fn connect_provider(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<ProviderConnectRequest>,
 ) -> Result<Json<ProviderStatus>, ApiErrorResponse> {
     auth(&s, &headers, true, None, None, true)?;
-    if req.mode != "demo" {
-        return Err(ApiError::new(
-            "provider_host_unavailable",
-            "External provider credentials cannot be activated until the provider process host is enabled",
-            false,
-        )
-        .into());
+    if req.mode == "demo" {
+        return Ok(Json(
+            s.service
+                .connect_demo_provider(&req.account_id, &req.provider_id)?,
+        ));
     }
-    Ok(Json(s.service.connect_demo_provider(
+    if !matches!(req.mode.as_str(), "sandbox" | "live") {
+        return Err(ApiError::invalid("provider mode must be demo, sandbox, or live").into());
+    }
+    let mut config = req.config.as_object().cloned().ok_or_else(|| {
+        ApiErrorResponse(ApiError::invalid(
+            "provider configuration must be an object",
+        ))
+    })?;
+    config.insert("mode".into(), serde_json::Value::String(req.mode.clone()));
+    let _health = probe_provider(&req.provider_id, serde_json::Value::Object(config.clone()))?;
+    store_provider_config(
         &req.account_id,
         &req.provider_id,
-    )?))
+        &serde_json::Value::Object(config),
+    )?;
+    let status =
+        s.service
+            .connect_verified_provider(&req.account_id, &req.provider_id, &req.mode)?;
+    Ok(Json(ProviderStatus {
+        state: status.state,
+        ..status
+    }))
+}
+
+fn provider_entry(provider_id: &str) -> Result<std::path::PathBuf, ApiError> {
+    if !matches!(
+        provider_id,
+        "coinbase-cdp-wallet" | "stripe-revenue" | "lithic-card"
+    ) {
+        return Err(ApiError::invalid("unknown bundled provider"));
+    }
+    let root = std::env::current_dir().map_err(|error| ApiError::internal(error.to_string()))?;
+    let path = root
+        .join("providers")
+        .join(provider_id)
+        .join("dist/index.js");
+    if !path.exists() {
+        return Err(ApiError::new(
+            "provider_not_built",
+            format!("Build provider packages first: {}", path.display()),
+            false,
+        ));
+    }
+    Ok(path)
+}
+
+fn probe_provider(
+    provider_id: &str,
+    config: serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
+    let entry = provider_entry(provider_id)?;
+    let mut child = Command::new("node")
+        .arg(entry)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| ApiError::new("provider_host_unavailable", error.to_string(), true))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ApiError::internal("provider stdin unavailable"))?;
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"config":config}})
+    )
+    .map_err(|error| ApiError::internal(error.to_string()))?;
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})
+    )
+    .map_err(|error| ApiError::internal(error.to_string()))?;
+    drop(stdin);
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ApiError::internal("provider stdout unavailable"))?;
+    let line = BufReader::new(stdout)
+        .lines()
+        .next()
+        .transpose()
+        .map_err(|error| ApiError::internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApiError::new(
+                "provider_unavailable",
+                "Provider returned no health result",
+                true,
+            )
+        })?;
+    let response: serde_json::Value = serde_json::from_str(&line).map_err(|_| {
+        ApiError::new(
+            "provider_protocol_error",
+            "Provider returned invalid JSON-RPC",
+            false,
+        )
+    })?;
+    let _ = child.wait();
+    if let Some(error) = response.get("error") {
+        return Err(ApiError::new(
+            "provider_rejected",
+            error
+                .get("message")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Provider rejected configuration"),
+            false,
+        ));
+    }
+    Ok(response
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+fn store_provider_config(
+    account_id: &str,
+    provider_id: &str,
+    config: &serde_json::Value,
+) -> Result<(), ApiError> {
+    #[cfg(target_os = "macos")]
+    {
+        let service = format!("com.mandate.provider.{account_id}.{provider_id}");
+        let secret = config.to_string();
+        let status = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-U",
+                "-s",
+                &service,
+                "-a",
+                provider_id,
+                "-w",
+                &secret,
+            ])
+            .status()
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        if !status.success() {
+            return Err(ApiError::new(
+                "keychain_unavailable",
+                "Provider credentials could not be stored in macOS Keychain",
+                false,
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (account_id, provider_id, config);
+        Err(ApiError::new(
+            "keychain_unavailable",
+            "External provider credentials require macOS Keychain in v0.1",
+            false,
+        ))
+    }
 }
 async fn create_agent(
     State(s): State<Arc<AppState>>,
@@ -613,10 +783,9 @@ async fn connect_agent(
         authority: AuthorityMode::Independent,
         capabilities: req.capabilities,
     })?;
-    let credential_dir = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".config/mandate/agents");
+    s.service
+        .set_agent_runtime(&credential.agent_id, &req.runtime)?;
+    let credential_dir = integration_home().join(".config/mandate/agents");
     std::fs::create_dir_all(&credential_dir)
         .map_err(|error| ApiError::internal(error.to_string()))?;
     let credential_path = credential_dir.join(format!("{}.token", credential.agent_id));
@@ -628,14 +797,244 @@ async fn connect_agent(
         std::fs::set_permissions(&credential_path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| ApiError::internal(error.to_string()))?;
     }
+    s.service.set_agent_installation(
+        &credential.agent_id,
+        "not_installed",
+        Some("Runtime registration has not been requested"),
+    )?;
     Ok(Json(serde_json::json!({
         "agent_id": credential.agent_id,
         "account_id": credential.account_id,
         "runtime": req.runtime,
         "credential_file": credential_path,
         "runtime_detected": runtime_detected(&req.runtime),
-        "runtime_installation": "pending_cli_connector"
+        "runtime_installation": "not_installed"
     })))
+}
+
+async fn update_agent(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<AgentUpdateRequest>,
+) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
+    auth(&s, &headers, true, None, None, true)?;
+    s.service.update_agent(&id, req)?;
+    Ok(Json(serde_json::json!({"agent_id":id,"status":"updated"})))
+}
+
+fn command_receipt(mut command: Command) -> Result<String, ApiError> {
+    let output = command
+        .output()
+        .map_err(|error| ApiError::new("runtime_unavailable", error.to_string(), false))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(ApiError::new(
+            "runtime_installation_failed",
+            if stderr.is_empty() { stdout } else { stderr },
+            false,
+        ));
+    }
+    Ok(if stdout.is_empty() {
+        "Command completed".into()
+    } else {
+        stdout
+    })
+}
+
+fn command_receipt_with_input(mut command: Command, input: &str) -> Result<String, ApiError> {
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| ApiError::new("runtime_unavailable", error.to_string(), false))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(ApiError::new(
+            "runtime_installation_failed",
+            if stderr.is_empty() { stdout } else { stderr },
+            false,
+        ));
+    }
+    Ok(if stdout.is_empty() {
+        "Command completed".into()
+    } else {
+        stdout
+    })
+}
+
+fn install_runtime(
+    runtime: &str,
+    credential_path: &std::path::Path,
+) -> Result<serde_json::Value, ApiError> {
+    let root = std::env::current_dir().map_err(|error| ApiError::internal(error.to_string()))?;
+    let mcp_entry = std::env::var_os("MANDATE_MCP_ENTRY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("packages/mcp/dist/index.js"));
+    if !mcp_entry.exists() {
+        return Err(ApiError::new(
+            "mcp_server_missing",
+            format!("Build the MCP adapter first: {}", mcp_entry.display()),
+            false,
+        ));
+    }
+    let credential = credential_path.to_string_lossy().to_string();
+    let entry = mcp_entry.to_string_lossy().to_string();
+    let home = integration_home();
+    match runtime {
+        "hermes" => {
+            let list = command_receipt({
+                let mut command = Command::new("hermes");
+                command.env("HOME", &home).args(["mcp", "list"]);
+                command
+            })?;
+            let registration = if list
+                .lines()
+                .any(|line| line.to_lowercase().contains("mandate"))
+            {
+                "Mandate was already registered with Hermes".to_string()
+            } else {
+                command_receipt_with_input(
+                    {
+                        let mut command = Command::new("hermes");
+                        command.env("HOME", &home).args([
+                            "mcp",
+                            "add",
+                            "mandate",
+                            "--command",
+                            "node",
+                            "--env",
+                            &format!("MANDATE_AGENT_CREDENTIAL_FILE={credential}"),
+                            "--args",
+                            &entry,
+                        ]);
+                        command
+                    },
+                    "Y\n",
+                )?
+            };
+            let probe = command_receipt({
+                let mut command = Command::new("hermes");
+                command.env("HOME", &home).args(["mcp", "test", "mandate"]);
+                command
+            })?;
+            if probe.contains('✗')
+                || probe.to_lowercase().contains("not found")
+                || probe.to_lowercase().contains("failed")
+            {
+                return Err(ApiError::new("runtime_probe_failed", probe, false));
+            }
+            Ok(
+                serde_json::json!({"runtime":"hermes","registration":registration,"probe":probe,"mcp_entry":entry}),
+            )
+        }
+        "openclaw" => {
+            let registration = command_receipt({
+                let mut command = Command::new("openclaw");
+                command.env("HOME", &home).args([
+                    "mcp",
+                    "add",
+                    "mandate",
+                    "--command",
+                    "node",
+                    "--arg",
+                    &entry,
+                    "--env",
+                    &format!("MANDATE_AGENT_CREDENTIAL_FILE={credential}"),
+                ]);
+                command
+            })?;
+            let include = "get_balance,create_receive_endpoint,create_invoice,create_checkout,create_payment_session,get_payment_session,transfer_funds,get_transactions,refund_transaction";
+            let _ = command_receipt({
+                let mut command = Command::new("openclaw");
+                command
+                    .env("HOME", &home)
+                    .args(["mcp", "tools", "mandate", "--include", include]);
+                command
+            });
+            let probe = command_receipt({
+                let mut command = Command::new("openclaw");
+                command
+                    .env("HOME", &home)
+                    .args(["mcp", "doctor", "mandate", "--probe"]);
+                command
+            })?;
+            Ok(
+                serde_json::json!({"runtime":"openclaw","registration":registration,"probe":probe,"mcp_entry":entry}),
+            )
+        }
+        _ => Err(ApiError::invalid("runtime must be openclaw or hermes")),
+    }
+}
+
+async fn install_agent(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
+    auth(&s, &headers, true, None, None, true)?;
+    let snapshot = s.service.dashboard_snapshot(
+        None,
+        RuntimeDetection {
+            openclaw: runtime_detected("openclaw"),
+            hermes: runtime_detected("hermes"),
+        },
+    )?;
+    let agent = snapshot
+        .agents
+        .into_iter()
+        .find(|agent| agent.id == id)
+        .ok_or_else(|| ApiErrorResponse(ApiError::not_found("agent")))?;
+    if !runtime_detected(&agent.runtime) {
+        s.service.set_agent_installation(
+            &id,
+            "runtime_missing",
+            Some("The runtime executable was not found in the daemon PATH"),
+        )?;
+        return Err(ApiError::new(
+            "runtime_unavailable",
+            format!(
+                "{} is not installed or not visible to the daemon",
+                agent.runtime
+            ),
+            false,
+        )
+        .into());
+    }
+    let credential_path = integration_home()
+        .join(".config/mandate/agents")
+        .join(format!("{id}.token"));
+    let receipt = install_runtime(&agent.runtime, &credential_path);
+    match receipt {
+        Ok(receipt) => {
+            s.service.set_agent_installation(
+                &id,
+                "installed",
+                Some("Runtime registration and MCP probe succeeded"),
+            )?;
+            Ok(Json(
+                serde_json::json!({"agent_id":id,"status":"installed","receipt":receipt}),
+            ))
+        }
+        Err(error) => {
+            let _ = s
+                .service
+                .set_agent_installation(&id, "failed", Some(&error.message));
+            Err(error.into())
+        }
+    }
 }
 async fn revoke_agent(
     State(s): State<Arc<AppState>>,
@@ -644,14 +1043,12 @@ async fn revoke_agent(
 ) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
     auth(&s, &headers, true, None, None, true)?;
     s.service.revoke_agent(&id)?;
-    if let Some(home) = std::env::var_os("HOME") {
-        let credential_path = std::path::PathBuf::from(home)
-            .join(".config/mandate/agents")
-            .join(format!("{id}.token"));
-        if credential_path.exists() {
-            std::fs::remove_file(&credential_path)
-                .map_err(|error| ApiError::internal(error.to_string()))?;
-        }
+    let credential_path = integration_home()
+        .join(".config/mandate/agents")
+        .join(format!("{id}.token"));
+    if credential_path.exists() {
+        std::fs::remove_file(&credential_path)
+            .map_err(|error| ApiError::internal(error.to_string()))?;
     }
     Ok(Json(serde_json::json!({"agent_id":id,"status":"revoked"})))
 }
@@ -669,7 +1066,7 @@ async fn diagnostics(
             "tcp":{"status":"ready","detail":"127.0.0.1:7741"},
             "unix_socket":{"status":"ready","detail":"Per-user socket · 0600"}
         },
-        "provider_host":{"status":"not_configured","detail":"Deterministic demo routes are available; external provider processes are not enabled"},
+        "provider_host":{"status":"manual_only","detail":"Bundled providers can validate credentials in isolated processes; operation supervision is pending"},
         "reconciliation":{"status":"manual_only","detail":"Scheduled polling and full comparison are not enabled"},
         "recovery":{"status":"not_configured","detail":"Recovery-package export is not implemented"}
     })))

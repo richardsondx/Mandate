@@ -22,8 +22,9 @@ by an external production dependency.
   - [x] Explicit preview versus connected-runtime labeling
   - [x] Authenticated daemon-backed dashboard aggregate
   - [x] Functional deterministic test-route operation forms
-  - [~] Provider configuration (truthful status/details work; live credentials pending provider host)
-  - [~] Agent connection and management (scoped file creation/revoke work; runtime-native install pending)
+  - [~] Provider configuration (demo routes plus Keychain-backed external credential validation work; operation dispatch pending)
+  - [x] Agent connection and grant management (create/edit/revoke, capability allowlist, authority mode, runtime status)
+  - [x] Persistent account setup/readiness checklist
   - [x] Live ledger-entry inspection
 - [ ] Native macOS `.app`, menu-bar shell, or DMG (deferred from v0.1)
 - [~] Homebrew/LaunchAgent packaging (formula skeleton exists; clean-Mac install not accepted)
@@ -73,7 +74,7 @@ by an external production dependency.
 - [x] Coinbase CDP adapter with mock/sandbox paths
 - [x] Stripe Revenue adapter with mock/test-mode paths
 - [x] Lithic Card adapter with mock/sandbox paths and sensitive-response marking
-- [ ] Rust daemon provider-process supervisor
+- [~] Rust daemon provider-process host (isolated validation/health subprocesses work; persistent supervision and execution pending)
 - [ ] Daemon routing into provider subprocesses
 - [ ] Polling cursors and scheduled reconciliation integration
 - [ ] Bundled-plugin signature verification
@@ -91,10 +92,11 @@ by an external production dependency.
 - [~] `mandate agents connect openclaw` creates the Mandate identity and receipt
 - [~] `mandate agents connect hermes` creates the Mandate identity and receipt
 - [x] Runtime binary detection helper
-- [ ] Runtime-native configuration installation through the detected CLI
+- [x] Runtime-native Hermes MCP installation through the supported CLI
+- [~] Runtime-native OpenClaw installation path implemented; acceptance awaits an installed OpenClaw runtime
 - [ ] Actual OpenClaw execution-environment balance probe
-- [ ] Actual Hermes MCP reload and balance probe
-- [~] UI-driven agent flows (create scoped credential file and revoke work; reconnect/rotation/probe pending)
+- [x] Actual Hermes MCP discovery plus scoped MCP balance smoke test in an isolated runtime home
+- [~] UI-driven agent flows (create/edit/install/probe/revoke work; credential rotation pending)
 
 ## Quality and release
 
@@ -120,8 +122,9 @@ The repository now proves the encrypted local economic core, canonical CLI/MCP
 operations, accounting invariants, provider adapter contracts, and an
 authenticated daemon-backed console with deterministic test routes. Preview is
 only the unauthenticated fixture view; Mandate itself has one local runtime.
-The next acceptance milestone is daemon-supervised provider test credentials
-plus runtime-native OpenClaw/Hermes installation and probes.
+The next acceptance milestone is provider-backed operation dispatch and
+reconciliation with supplied Coinbase, Stripe, and Lithic sandbox credentials,
+plus an OpenClaw probe on a Mac where OpenClaw is installed.
 
 The user-facing definition of done and remaining release gates are maintained
 in [`COMPLETION_BRIEF.md`](COMPLETION_BRIEF.md).

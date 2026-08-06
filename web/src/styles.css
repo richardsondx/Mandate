@@ -476,6 +476,15 @@ h3 { font-size: .98rem; font-weight: 600; letter-spacing: -.015em; }
 .connection-choice small { margin-top: 4px; font-size: .63rem; line-height: 1.45; }
 .connection-choice--available { border-color: color-mix(in srgb, var(--green) 38%, var(--line)); background: var(--green-pale); }
 .connection-choice--available > span { background: var(--green-soft); color: var(--green); }
+.provider-credential-form { display: grid; grid-template-columns: 1fr 1fr; }
+.provider-credential-form > div, .provider-credential-form > small { grid-column: 1 / -1; }
+.provider-credential-form label { display: grid; gap: 6px; color: var(--muted); font-size: .64rem; font-weight: 600; }
+.provider-credential-form input, .provider-credential-form select { width: 100%; min-width: 0; }
+.provider-credential-form button { align-self: end; }
+.capability-checks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 4px 0 14px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; }
+.capability-checks legend { padding: 0 5px; color: var(--muted); font-size: .64rem; font-weight: 650; }
+.capability-checks label { display: flex; align-items: center; gap: 6px; font-size: .64rem; text-transform: capitalize; }
+.capability-checks input { width: auto; accent-color: var(--green); }
 .environment-options { display: flex; flex-direction: column; gap: 10px; }
 .environment-option { display: grid; grid-template-columns: 38px minmax(0,1fr) 20px; gap: 13px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); }
 .environment-option--selected { border-color: color-mix(in srgb, var(--green) 42%, var(--line)); background: var(--green-pale); }
@@ -500,6 +509,7 @@ h3 { font-size: .98rem; font-weight: 600; letter-spacing: -.015em; }
 .setup-checklist strong { font-size: .71rem; }
 .setup-checklist small { margin-top: 3px; color: var(--muted); font-size: .61rem; }
 .setup-checklist svg { color: var(--green); }
+.setup-checklist--dialog { grid-template-columns: 1fr; margin-bottom: 16px; }
 .zero-state-note { margin: 0; }
 .account-empty { padding: 42px 24px; text-align: center; }
 .account-empty svg { color: var(--green); }
@@ -612,6 +622,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .modal-layer { align-items: end; padding: 0; }
   .modal, .modal--wide { width: 100%; max-height: 91vh; border-radius: 16px 16px 0 0; }
   .form-grid, .runtime-picker { grid-template-columns: 1fr; }
+  .provider-credential-form, .capability-checks { grid-template-columns: 1fr; }
   .ledger-meta { grid-template-columns: 1fr 1fr; }
 }
 

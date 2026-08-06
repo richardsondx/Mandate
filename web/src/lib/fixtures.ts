@@ -22,9 +22,9 @@ export const fixtureData: DashboardData = {
     { id: 'chk_6LM3', title: 'Research package', description: 'Checkout session · completed', amount: '349.00', asset: 'USD', direction: 'in', status: 'settled', provider: 'Stripe', actor: 'Revenue Agent', time: 'Aug 4', steps: ['Checkout created', 'Payment confirmed', 'Ledger posted'], ledgerEntries: [] },
   ],
   agents: [
-    { id: 'agent_openclaw', name: 'Studio Operator', runtime: 'OpenClaw', mode: 'independent', capabilities: ['balance', 'pay', 'transactions'], lastSeen: 'Now', status: 'connected' },
-    { id: 'agent_hermes', name: 'Revenue Agent', runtime: 'Hermes', mode: 'shared', capabilities: ['balance', 'receive', 'invoice', 'checkout'], lastSeen: '2 min ago', status: 'connected' },
-    { id: 'agent_audit', name: 'Auditor', runtime: 'Custom', mode: 'observe_only', capabilities: ['balance', 'transactions'], lastSeen: '3 days ago', status: 'offline' },
+    { id: 'agent_openclaw', name: 'Studio Operator', runtime: 'OpenClaw', mode: 'independent', capabilities: ['balance', 'pay', 'transactions'], lastSeen: 'Now', status: 'connected', installationStatus: 'installed' },
+    { id: 'agent_hermes', name: 'Revenue Agent', runtime: 'Hermes', mode: 'shared', capabilities: ['balance', 'receive', 'invoice', 'checkout'], lastSeen: '2 min ago', status: 'connected', installationStatus: 'installed' },
+    { id: 'agent_audit', name: 'Auditor', runtime: 'Custom', mode: 'observe_only', capabilities: ['balance', 'transactions'], lastSeen: '3 days ago', status: 'offline', installationStatus: 'not_installed' },
   ],
   providers: [
     { id: 'coinbase-cdp-wallet', name: 'Coinbase CDP', category: 'Hold', description: 'USDC treasury on Base with provider-managed signing.', capabilities: ['Receive', 'Balance', 'Transfer'], status: 'sandbox', detail: 'Base Sepolia · healthy' },

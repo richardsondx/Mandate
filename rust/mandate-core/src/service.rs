@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS instance_settings(key TEXT PRIMARY KEY, value TEXT NO
 CREATE TABLE IF NOT EXISTS provider_connections(id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES economic_accounts(id), provider_id TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(account_id,provider_id));
 CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, account_id TEXT NOT NULL REFERENCES economic_accounts(id), authority TEXT NOT NULL, capabilities TEXT NOT NULL, revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS agent_profiles(agent_id TEXT PRIMARY KEY, name TEXT NOT NULL, runtime TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT);
+CREATE TABLE IF NOT EXISTS agent_runtime_installations(agent_id TEXT PRIMARY KEY REFERENCES agent_profiles(agent_id), status TEXT NOT NULL, detail TEXT, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS credentials(token_hash TEXT PRIMARY KEY, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, is_admin INTEGER NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS positions(account_id TEXT NOT NULL, provider TEXT NOT NULL, asset TEXT NOT NULL, network TEXT NOT NULL DEFAULT '', available TEXT NOT NULL, reserved TEXT NOT NULL, pending TEXT NOT NULL, settled TEXT NOT NULL, decimals INTEGER NOT NULL, reconciled_at TEXT NOT NULL, PRIMARY KEY(account_id, provider, asset, network));
 CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, kind TEXT NOT NULL, account_id TEXT NOT NULL, provider TEXT NOT NULL, status TEXT NOT NULL, amount TEXT, currency TEXT, external_url TEXT, address TEXT, expires_at TEXT, idempotency_key TEXT, created_at TEXT NOT NULL, UNIQUE(account_id, kind, idempotency_key));
@@ -300,6 +301,33 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         Ok(account)
     }
 
+    pub fn update_profile(&self, req: ProfileUpdateRequest) -> Result<(), ApiError> {
+        let administrator_name = req.administrator_name.trim();
+        let principal_name = req.principal_name.trim();
+        if administrator_name.is_empty() || principal_name.is_empty() {
+            return Err(ApiError::invalid(
+                "administrator and principal names are required",
+            ));
+        }
+        let mut conn = self.db.lock().unwrap();
+        let tx = conn.transaction().map_err(db_err)?;
+        tx.execute("UPDATE principals SET name=?1", [principal_name])
+            .map_err(db_err)?;
+        tx.execute(
+            "INSERT INTO instance_settings(key,value) VALUES ('administrator_name',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [administrator_name],
+        ).map_err(db_err)?;
+        Self::event_tx(
+            &tx,
+            "instance.profile_updated",
+            serde_json::json!({
+                "administrator_name": administrator_name,
+                "principal_name": principal_name
+            }),
+        )?;
+        tx.commit().map_err(db_err)
+    }
+
     fn connect_demo_provider_tx(
         tx: &Transaction<'_>,
         account_id: &str,
@@ -349,6 +377,48 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             serde_json::json!({"account_id":account_id,"provider_id":provider_id,"mode":"demo"}),
         )?;
         tx.commit().map_err(db_err)?;
+        drop(conn);
+        self.providers_for(account_id)
+            .into_iter()
+            .find(|provider| provider.id == provider_id)
+            .ok_or_else(|| ApiError::not_found("provider"))
+    }
+
+    pub fn connect_verified_provider(
+        &self,
+        account_id: &str,
+        provider_id: &str,
+        mode: &str,
+    ) -> Result<ProviderStatus, ApiError> {
+        if !matches!(mode, "sandbox" | "live") {
+            return Err(ApiError::invalid("provider mode must be sandbox or live"));
+        }
+        if !Self::provider_catalog()
+            .iter()
+            .any(|provider| provider.id == provider_id)
+        {
+            return Err(ApiError::invalid("unknown bundled provider"));
+        }
+        let conn = self.db.lock().unwrap();
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM economic_accounts WHERE id=?1",
+                [account_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if !exists {
+            return Err(ApiError::not_found("economic account"));
+        }
+        conn.execute(
+            "INSERT INTO provider_connections(id,account_id,provider_id,mode,status,created_at) VALUES (?1,?2,?3,?4,'verified',?5) ON CONFLICT(account_id,provider_id) DO UPDATE SET mode=excluded.mode,status='verified'",
+            params![format!("pcon_{}", Uuid::new_v4().simple()), account_id, provider_id, mode, Utc::now().to_rfc3339()],
+        ).map_err(db_err)?;
+        Self::event_conn(
+            &conn,
+            "provider.verified",
+            serde_json::json!({"account_id":account_id,"provider_id":provider_id,"mode":mode}),
+        )?;
         drop(conn);
         self.providers_for(account_id)
             .into_iter()
@@ -424,6 +494,87 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             serde_json::json!({"agent_id":agent_id}),
         )?;
         tx.commit().map_err(db_err)
+    }
+
+    pub fn update_agent(&self, agent_id: &str, req: AgentUpdateRequest) -> Result<(), ApiError> {
+        let name = req.name.trim();
+        if name.is_empty() {
+            return Err(ApiError::invalid("agent name is required"));
+        }
+        let allowed: BTreeSet<&str> = [
+            "balance",
+            "receive",
+            "invoice",
+            "checkout",
+            "pay",
+            "transfer",
+            "transactions",
+            "refund",
+        ]
+        .into_iter()
+        .collect();
+        let capabilities: BTreeSet<String> = req.capabilities.into_iter().collect();
+        if capabilities.is_empty()
+            || capabilities
+                .iter()
+                .any(|capability| !allowed.contains(capability.as_str()))
+        {
+            return Err(ApiError::invalid(
+                "select at least one valid agent capability",
+            ));
+        }
+        let mut conn = self.db.lock().unwrap();
+        let tx = conn.transaction().map_err(db_err)?;
+        let changed = tx.execute(
+            "UPDATE grants SET authority=?1,capabilities=?2 WHERE agent_id=?3 AND revoked_at IS NULL",
+            params![format!("{:?}", req.authority).to_lowercase(), serde_json::to_string(&capabilities).unwrap(), agent_id],
+        ).map_err(db_err)?;
+        if changed == 0 {
+            return Err(ApiError::not_found("agent"));
+        }
+        tx.execute(
+            "UPDATE agent_profiles SET name=?1 WHERE agent_id=?2",
+            params![name, agent_id],
+        )
+        .map_err(db_err)?;
+        Self::event_tx(
+            &tx,
+            "agent.updated",
+            serde_json::json!({"agent_id": agent_id, "capabilities": capabilities}),
+        )?;
+        tx.commit().map_err(db_err)
+    }
+
+    pub fn set_agent_installation(
+        &self,
+        agent_id: &str,
+        status: &str,
+        detail: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let conn = self.db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO agent_runtime_installations(agent_id,status,detail,updated_at) VALUES (?1,?2,?3,?4) ON CONFLICT(agent_id) DO UPDATE SET status=excluded.status,detail=excluded.detail,updated_at=excluded.updated_at",
+            params![agent_id, status, detail, Utc::now().to_rfc3339()],
+        ).map_err(db_err)?;
+        Self::event_conn(
+            &conn,
+            "agent.runtime_installation",
+            serde_json::json!({"agent_id":agent_id,"status":status,"detail":detail}),
+        )
+    }
+
+    pub fn set_agent_runtime(&self, agent_id: &str, runtime: &str) -> Result<(), ApiError> {
+        let conn = self.db.lock().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE agent_profiles SET runtime=?1 WHERE agent_id=?2",
+                params![runtime, agent_id],
+            )
+            .map_err(db_err)?;
+        if changed == 0 {
+            return Err(ApiError::not_found("agent"));
+        }
+        Ok(())
     }
 
     pub fn balance(&self, account_id: &str) -> Result<BalanceResponse, ApiError> {
@@ -901,6 +1052,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                 provider.mode = mode.clone();
                 provider.state = if status == "connected" && mode == "demo" {
                     "sandbox".into()
+                } else if status == "verified" {
+                    "live_ready".into()
                 } else {
                     status
                 };
@@ -969,7 +1122,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             let conn = self.db.lock().unwrap();
             let mut stmt = conn
                 .prepare(
-                    "SELECT g.agent_id,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom'),g.authority,g.capabilities,g.revoked_at,COALESCE(p.created_at,'1970-01-01T00:00:00Z') FROM grants g LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id WHERE g.account_id=?1 ORDER BY COALESCE(p.created_at,'') DESC",
+                    "SELECT g.agent_id,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom'),g.authority,g.capabilities,g.revoked_at,COALESCE(p.created_at,'1970-01-01T00:00:00Z'),COALESCE(i.status,'not_installed'),i.detail FROM grants g LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id LEFT JOIN agent_runtime_installations i ON i.agent_id=g.agent_id WHERE g.account_id=?1 ORDER BY COALESCE(p.created_at,'') DESC",
                 )
                 .map_err(db_err)?;
             let rows = stmt
@@ -982,13 +1135,24 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                         r.get::<_, String>(4)?,
                         r.get::<_, Option<String>>(5)?,
                         r.get::<_, String>(6)?,
+                        r.get::<_, String>(7)?,
+                        r.get::<_, Option<String>>(8)?,
                     ))
                 })
                 .map_err(db_err)?;
             let mut agents = vec![];
             for row in rows {
-                let (id, name, runtime, authority, capabilities, revoked_at, created_at) =
-                    row.map_err(db_err)?;
+                let (
+                    id,
+                    name,
+                    runtime,
+                    authority,
+                    capabilities,
+                    revoked_at,
+                    created_at,
+                    installation_status,
+                    installation_detail,
+                ) = row.map_err(db_err)?;
                 let authority = match authority.as_str() {
                     "shared" => AuthorityMode::Shared,
                     "observeonly" | "observe_only" => AuthorityMode::ObserveOnly,
@@ -1011,6 +1175,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                     created_at: created_at
                         .parse()
                         .map_err(|e| ApiError::internal(format!("{e}")))?,
+                    installation_status,
+                    installation_detail,
                 });
             }
             agents

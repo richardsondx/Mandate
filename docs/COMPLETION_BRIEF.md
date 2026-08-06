@@ -29,21 +29,26 @@ that must work from a clean Mac through a repeatable economic operation.
 - [x] Create receive, invoice, checkout, payment-session, transfer, and refund operations through the daemon-backed UI when their required route exists.
 - [x] Inspect resulting activity and balanced ledger entries.
 - [x] Create and revoke a scoped OpenClaw or Hermes identity.
+- [x] Edit agent authority and capability grants from the dashboard.
+- [x] Open a persistent account setup/readiness checklist.
 - [x] See daemon-measured System diagnostics without false readiness claims.
-- [ ] Install and probe runtime-native OpenClaw/Hermes configuration entirely from the dashboard. Scoped identities work; installation remains a CLI connector task.
+- [x] Install and probe Hermes MCP configuration entirely from the dashboard; verified against an isolated Hermes home with 10 canonical tools and a scoped balance call.
+- [~] Install and probe OpenClaw from the dashboard. The supported CLI path is implemented, but OpenClaw is not installed on the reference Mac for acceptance.
 
 ## External-provider acceptance
 
 The repository is **not** externally provider-functional until all of these are complete:
 
-- [ ] The daemon supervises bundled provider subprocesses.
-- [ ] Secure credential forms write secret references, never browser-visible plaintext storage.
+- [~] The daemon launches bundled provider subprocesses for configuration validation and health checks; persistent operation supervision is pending.
+- [x] Secure credential forms send credentials once over loopback and store their configuration in macOS Keychain, never SQLite or browser storage.
 - [ ] Coinbase test credentials complete receive, balance, transfer, and finality reconciliation.
 - [ ] Stripe test credentials complete checkout, invoice, settlement, fees, refund, and polling reconciliation.
 - [ ] Lithic sandbox credentials complete one-time reveal, authorization, settlement, decline, expiry, and refund without secret leakage.
 - [ ] REST, CLI JSON, and MCP pass the same provider-backed golden scenarios.
 
-Until then, provider cards must say `Not connected` or `Demo connected`; they must not imply that entering credentials is currently supported.
+Until then, provider cards say `Not connected`, `Demo connected`, or
+`Credentials verified`. Verified credentials are not treated as an operational
+money route and cannot be confused with Live.
 
 ## Release acceptance
 
@@ -55,7 +60,8 @@ Until then, provider cards must say `Not connected` or `Demo connected`; they mu
 ## Current verdict
 
 The local deterministic product is usable for setup, account isolation,
-provider-routing demonstrations, agent grants, economic workflows, and ledger
-inspection. The external Coinbase, Stripe, and Lithic connection path is not
-yet usable because provider subprocess supervision and secret-reference setup
-are not implemented. That distinction is a release boundary, not a UI detail.
+provider-routing demonstrations, editable agent grants, Hermes installation,
+economic workflows, and ledger inspection. External provider credentials can
+be validated and retained securely, but external money operations and polling
+reconciliation are not yet accepted. That distinction is a release boundary,
+not a UI detail.

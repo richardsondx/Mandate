@@ -37,6 +37,8 @@ export type Agent = {
   capabilities: string[]
   lastSeen: string
   status: 'connected' | 'attention' | 'offline'
+  installationStatus: 'installed' | 'not_installed' | 'runtime_missing' | 'failed'
+  installationDetail?: string
 }
 
 export type Provider = {

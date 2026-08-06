@@ -22,7 +22,7 @@ type SnapshotResponse = {
     transactions: {
       data: Array<{ id: string; operation_id?: string; description: string; asset: string; created_at: string; entries: Array<{ account: string; amount_atomic: string }> }>
     }
-    agents: Array<{ id: string; name: string; runtime: string; authority: 'independent' | 'shared' | 'observe_only'; capabilities: string[]; status: string; created_at: string }>
+    agents: Array<{ id: string; name: string; runtime: string; authority: 'independent' | 'shared' | 'observe_only'; capabilities: string[]; status: string; created_at: string; installation_status: 'installed' | 'not_installed' | 'runtime_missing' | 'failed'; installation_detail?: string }>
     providers: Array<{ id: string; capabilities: string[]; state: string; mode: string }>
     outbox_cursor: number
     runtimes: RuntimeDetection
@@ -151,6 +151,8 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
       capabilities: agent.capabilities,
       lastSeen: new Date(agent.created_at).toLocaleString(),
       status: 'connected',
+      installationStatus: agent.installation_status,
+      installationDetail: agent.installation_detail,
     })),
     providers: snapshot.providers.map(provider => {
       const catalog = PROVIDERS[provider.id as keyof typeof PROVIDERS] ?? { name: provider.id, category: 'Hold' as const, description: 'Bundled provider adapter.' }
@@ -162,7 +164,7 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
         description: catalog.description,
         capabilities: provider.capabilities,
         status: connected ? provider.state as 'sandbox' | 'live_ready' | 'live' : 'disconnected',
-        detail: connected ? `${provider.mode === 'demo' ? 'Demo route' : provider.mode} · connected` : 'No route connected',
+        detail: connected ? provider.state === 'live_ready' ? `${provider.mode} credentials · verified` : `${provider.mode === 'demo' ? 'Demo route' : provider.mode} · connected` : 'No route connected',
       }
     }),
     ...system,

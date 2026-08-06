@@ -186,6 +186,19 @@ pub struct AgentCreateRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AgentUpdateRequest {
+    pub name: String,
+    pub authority: AuthorityMode,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ProfileUpdateRequest {
+    pub administrator_name: String,
+    pub principal_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCredential {
     pub agent_id: String,
     pub token: String,
@@ -232,6 +245,8 @@ pub struct ProviderConnectRequest {
     pub provider_id: String,
     #[serde(default = "default_demo_mode")]
     pub mode: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
 }
 
 fn default_demo_mode() -> String {
@@ -255,6 +270,8 @@ pub struct AgentSummary {
     pub capabilities: Vec<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
+    pub installation_status: String,
+    pub installation_detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
