@@ -1,0 +1,1 @@
+import test from"node:test";import{runProviderConformance}from"@mandate/provider-sdk";import{StripeRevenuePlugin}from"../plugin.js";test("stripe mock conforms",async()=>runProviderConformance(new StripeRevenuePlugin(),{mode:"mock"}));

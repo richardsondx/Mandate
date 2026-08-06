@@ -1,0 +1,24 @@
+{
+  "name": "mandate",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A local economic operating system for autonomous agents",
+  "author": "Richardson Dackam (https://x.com/richardsondx)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/richardsondx/Mandate.git"
+  },
+  "packageManager": "pnpm@10.22.0",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "dev:web": "pnpm --dir web dev",
+    "dev:mcp": "pnpm --dir packages/mcp dev"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,17 @@
+mcp_servers:
+  mandate:
+    command: mandate-mcp
+    args: []
+    enabled: true
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - get_balance
+        - create_receive_endpoint
+        - create_invoice
+        - create_checkout
+        - create_payment_session
+        - get_payment_session
+        - transfer_funds
+        - get_transactions
+        - refund_transaction

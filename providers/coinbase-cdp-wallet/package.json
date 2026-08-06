@@ -1,0 +1,6 @@
+{
+  "name": "@mandate/provider-coinbase-cdp-wallet", "version": "0.1.0", "private": true, "type": "module",
+  "main": "dist/index.js", "scripts": { "build": "tsc -p tsconfig.json", "start": "node dist/index.js", "test": "npm run build && node --test dist/test/*.test.js" },
+  "dependencies": { "@mandate/provider-sdk": "workspace:*" },
+  "devDependencies": { "@types/node": "^22.10.0", "typescript": "^5.7.2" }
+}

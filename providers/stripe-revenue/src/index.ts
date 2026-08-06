@@ -1,0 +1,1 @@
+import {runStdio} from "@mandate/provider-sdk";import{StripeRevenuePlugin}from"./plugin.js";export{StripeRevenuePlugin}from"./plugin.js";if(process.argv[1]&&import.meta.url===new URL(`file://${process.argv[1]}`).href)await runStdio(new StripeRevenuePlugin());
