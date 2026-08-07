@@ -723,6 +723,39 @@ h3 { font-size: .98rem; font-weight: 600; letter-spacing: -.015em; }
 .capability-checks legend { padding: 0 5px; color: var(--muted); font-size: .64rem; font-weight: 650; }
 .capability-checks label { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: .64rem; text-transform: capitalize; color: var(--ink); cursor: pointer; }
 .capability-checks input { width: auto; accent-color: var(--green); }
+
+/* Per-capability permission model */
+.preset-picker { margin: 14px 0; }
+.preset-label { display: block; color: var(--muted); font-size: .64rem; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 8px; }
+.preset-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.preset-option { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); cursor: pointer; text-align: left; transition: border-color 120ms ease, background 120ms ease; }
+.preset-option:hover { border-color: var(--green); }
+.preset-option--active { border-color: var(--green); background: var(--green-pale); }
+.preset-option strong { font-size: .72rem; color: var(--ink); }
+.preset-option small { font-size: .6rem; color: var(--muted); line-height: 1.35; }
+
+.capability-groups { margin: 4px 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.capability-groups legend { padding: 0 5px; color: var(--muted); font-size: .64rem; font-weight: 650; }
+.capability-groups-hint { margin: 0 0 10px; color: var(--muted); font-size: .66rem; line-height: 1.4; }
+.capability-group { margin-bottom: 12px; }
+.capability-group:last-child { margin-bottom: 0; }
+.capability-group-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line-soft); }
+.capability-group-label { font-size: .6rem; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.capability-group-header small { font-size: .58rem; color: var(--faint, var(--muted)); }
+
+.cap-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; }
+.cap-row-label { font-size: .7rem; color: var(--ink); text-transform: capitalize; }
+
+.cap-tri-state { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.cap-tri-button { padding: 4px 10px; font-size: .6rem; font-weight: 540; color: var(--muted); background: transparent; border: none; border-right: 1px solid var(--line); cursor: pointer; transition: background 100ms ease, color 100ms ease; }
+.cap-tri-button:last-child { border-right: none; }
+.cap-tri-button:hover { background: var(--line-soft); color: var(--ink); }
+.cap-tri-button--active { font-weight: 650; }
+.cap-tri-button--active.cap-tri-button--off { background: var(--line-soft); color: var(--muted); }
+.cap-tri-button--active:not(.cap-tri-button--off):not(.cap-tri-button--approve) { background: var(--green); color: #fff; }
+.cap-tri-button--active.cap-tri-button--approve { background: var(--warning, #f59e0b); color: #fff; }
+.cap-tag--approval { color: var(--warning, #f59e0b); border-color: color-mix(in srgb, var(--warning, #f59e0b) 30%, var(--line)); }
+
 .environment-options { display: flex; flex-direction: column; gap: 10px; }
 .environment-option { display: grid; grid-template-columns: 38px minmax(0,1fr) 20px; gap: 13px; align-items: start; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); }
 .environment-option--selected { border-color: color-mix(in srgb, var(--green) 42%, var(--line)); background: var(--green-pale); }
@@ -882,7 +915,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .modal, .modal--wide { width: 100%; max-height: 91vh; border-radius: 16px 16px 0 0; }
   .form-grid, .runtime-picker { grid-template-columns: 1fr; }
   .instruction-actions { flex-direction: column; align-items: stretch; }
-  .provider-credential-form, .capability-checks { grid-template-columns: 1fr; }
+  .provider-credential-form, .capability-checks, .preset-options { grid-template-columns: 1fr; }
   .ledger-meta { grid-template-columns: 1fr 1fr; }
 }
 

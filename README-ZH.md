@@ -63,11 +63,30 @@ Mandate 正是为此而生：构建一个持续循环的经济闭环，让 Agent
 
 ## Screenshots (界面截图)
 
-<p align="center">
-  <img src="docs/assets/dashboard-overview.png" alt="Mandate 控制面板 — 一览接收、持有与支出仓位" width="920">
-</p>
+<table width="100%">
+  <tr>
+    <td width="50%" align="center">
+      <strong>控制面板概览</strong><br/>
+      <img src="docs/assets/dashboard-overview.png" alt="Mandate 控制面板概览" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <strong>余额与流动性</strong><br/>
+      <img src="docs/assets/balances-liquidity.png" alt="余额与流动性" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>标准化活动日志</strong><br/>
+      <img src="docs/assets/economic-activity.png" alt="标准化活动日志" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <strong>能力参考指南</strong><br/>
+      <img src="docs/assets/capability-reference.png" alt="能力参考指南" width="100%">
+    </td>
+  </tr>
+</table>
 
-*Mandate Dashboard 提供跨经济账户的服务商仓位、能力就绪状态、已连接 Agent 以及复式记账账本活动的实时视图。*
+*Mandate 控制面板提供完整的经济活动可见性：控制面板概览、细粒度的账户与流动性路由状态、标准化的复式记账账本活动日志，以及标准化的能力参考指南。*
 
 ## 项目状态
 

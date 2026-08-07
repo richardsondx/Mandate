@@ -88,12 +88,15 @@ export type LiquidityConfig = {
   autoReplenish: boolean
 }
 
+export type CapabilityMode = 'autonomous' | 'require_approval'
+
 export type Agent = {
   id: string
   name: string
   runtime: 'OpenClaw' | 'Hermes' | 'Custom'
   mode: 'independent' | 'shared' | 'observe_only'
   capabilities: string[]
+  capabilityModes?: Record<string, CapabilityMode>
   lastSeen: string
   verificationStatus?: 'created' | 'verified' | 'active' | 'revoked'
   status: 'connected' | 'attention' | 'offline'

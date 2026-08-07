@@ -549,8 +549,8 @@ function AgentRow({ agent, compact = false, onMore, onTestConnection }: { agent:
   return (
     <div className={`agent-row ${compact ? 'agent-row--compact' : ''}`}>
       <span className={`agent-avatar agent-avatar--${agent.runtime.toLowerCase()}`}>{agent.runtime === 'OpenClaw' ? 'O' : agent.runtime === 'Hermes' ? 'H' : 'C'}<i /></span>
-      <div className="agent-name"><strong>{agent.name}</strong><small>{agent.runtime} · {agent.mode.replace('_', ' ')}</small></div>
-      {!compact && <div className="capability-tags">{agent.capabilities.map(c => <span key={c}>{c}</span>)}</div>}
+      <div className="agent-name"><strong>{agent.name}</strong><small>{agent.runtime} · {agent.capabilities.length} {agent.capabilities.length === 1 ? 'capability' : 'capabilities'}</small></div>
+      {!compact && <div className="capability-tags">{agent.capabilities.map(c => <span key={c} className={agent.capabilityModes?.[c] === 'require_approval' ? 'cap-tag--approval' : ''}>{c}{agent.capabilityModes?.[c] === 'require_approval' ? ' · approval' : ''}</span>)}</div>}
       {!compact && (
       <div className="agent-last">
         <div className="status-pill-group">

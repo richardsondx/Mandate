@@ -4,7 +4,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -120,7 +120,15 @@ INSERT OR IGNORE INTO provider_connections(id,account_id,provider_id,mode,status
 SELECT 'pcon_stripe_' || account_id,account_id,'stripe-revenue','demo','connected',MIN(reconciled_at) FROM positions WHERE provider='fake-revenue' GROUP BY account_id;
 INSERT OR IGNORE INTO provider_connections(id,account_id,provider_id,mode,status,created_at)
 SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',MIN(reconciled_at) FROM positions WHERE provider='fake-card' GROUP BY account_id;
-"#).map_err(db_err)
+"#).map_err(db_err)?;
+        // Add capability_modes column to grants (idempotent — ignores error
+        // if the column already exists from a prior migration).
+        let _ = self
+            .db
+            .lock()
+            .unwrap()
+            .execute("ALTER TABLE grants ADD COLUMN capability_modes TEXT", []);
+        Ok(())
     }
 
     pub fn initialize(&self) -> Result<InitResult, ApiError> {
@@ -219,8 +227,9 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         if row.1 {
             return Ok(());
         }
-        let grant: Option<(String, String)> = conn.query_row("SELECT account_id,capabilities FROM grants WHERE agent_id=?1 AND revoked_at IS NULL", [&row.0], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(db_err)?;
-        let (granted_account, capabilities) = grant.ok_or_else(ApiError::unauthorized)?;
+        let grant: Option<(String, String, Option<String>)> = conn.query_row("SELECT account_id,capabilities,capability_modes FROM grants WHERE agent_id=?1 AND revoked_at IS NULL", [&row.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(db_err)?;
+        let (granted_account, capabilities, modes_json) =
+            grant.ok_or_else(ApiError::unauthorized)?;
         if account.is_some_and(|a| a != granted_account) {
             return Err(ApiError::forbidden(
                 "agent cannot access this economic account",
@@ -232,6 +241,19 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             return Err(ApiError::forbidden(
                 "agent grant does not include this capability",
             ));
+        }
+        // Check per-capability execution mode. RequireApproval blocks
+        // execution until an operator approves the operation.
+        if let Some(cap) = capability {
+            let modes =
+                Self::parse_capability_modes(modes_json, &caps.iter().cloned().collect::<Vec<_>>());
+            if let Some(CapabilityMode::RequireApproval) = modes.get(cap) {
+                return Err(ApiError::new(
+                    "approval_required",
+                    format!("this capability ({cap}) requires operator approval before execution"),
+                    false,
+                ));
+            }
         }
         Ok(())
     }
@@ -260,13 +282,14 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                 account_name: None,
                 authority: None,
                 capabilities: None,
+                capability_modes: None,
                 status: None,
             });
         }
         let agent_id = row.0;
         let grant = conn
             .query_row(
-                "SELECT g.account_id,a.name,g.authority,g.capabilities,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom') FROM grants g JOIN economic_accounts a ON a.id=g.account_id LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id WHERE g.agent_id=?1 AND g.revoked_at IS NULL",
+                "SELECT g.account_id,a.name,g.authority,g.capabilities,g.capability_modes,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom') FROM grants g JOIN economic_accounts a ON a.id=g.account_id LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id WHERE g.agent_id=?1 AND g.revoked_at IS NULL",
                 [&agent_id],
                 |r| {
                     Ok((
@@ -274,15 +297,16 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                         r.get::<_, String>(1)?,
                         r.get::<_, String>(2)?,
                         r.get::<_, String>(3)?,
-                        r.get::<_, String>(4)?,
+                        r.get::<_, Option<String>>(4)?,
                         r.get::<_, String>(5)?,
+                        r.get::<_, String>(6)?,
                     ))
                 },
             )
             .optional()
             .map_err(db_err)?
             .ok_or_else(ApiError::unauthorized)?;
-        let (account_id, account_name, authority, capabilities, name, runtime) = grant;
+        let (account_id, account_name, authority, capabilities, modes_json, name, runtime) = grant;
         let authority = match authority.as_str() {
             "shared" => AuthorityMode::Shared,
             "observeonly" | "observe_only" => AuthorityMode::ObserveOnly,
@@ -292,6 +316,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             .map_err(|e| ApiError::internal(e.to_string()))?
             .into_iter()
             .collect();
+        let modes = Self::parse_capability_modes(modes_json, &caps);
         Ok(CallerIdentity {
             is_admin: false,
             agent_id: Some(agent_id),
@@ -301,6 +326,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             account_name: Some(account_name),
             authority: Some(authority),
             capabilities: Some(caps),
+            capability_modes: Some(modes),
             status: Some("connected".into()),
         })
     }
@@ -526,15 +552,17 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         let token = random_token();
         let caps: BTreeSet<_> = req.capabilities.iter().cloned().collect();
         let caps_json = serde_json::to_string(&caps).unwrap();
+        let modes_json = Self::serialize_capability_modes(&req.capabilities, &req.capability_modes);
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO grants VALUES (?1,?2,?3,?4,?5,NULL)",
+            "INSERT INTO grants(id,agent_id,account_id,authority,capabilities,revoked_at,capability_modes) VALUES (?1,?2,?3,?4,?5,NULL,?6)",
             params![
                 format!("grt_{}", Uuid::new_v4().simple()),
                 agent_id,
                 req.account_id,
                 format!("{:?}", req.authority).to_lowercase(),
-                caps_json
+                caps_json,
+                modes_json,
             ],
         )
         .map_err(db_err)?;
@@ -599,9 +627,13 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         Self::validate_agent_capabilities(&capabilities.iter().cloned().collect::<Vec<_>>())?;
         let mut conn = self.db.lock().unwrap();
         let tx = conn.transaction().map_err(db_err)?;
+        let modes_json = Self::serialize_capability_modes(
+            &capabilities.iter().cloned().collect::<Vec<_>>(),
+            &req.capability_modes,
+        );
         let changed = tx.execute(
-            "UPDATE grants SET authority=?1,capabilities=?2 WHERE agent_id=?3 AND revoked_at IS NULL",
-            params![format!("{:?}", req.authority).to_lowercase(), serde_json::to_string(&capabilities).unwrap(), agent_id],
+            "UPDATE grants SET authority=?1,capabilities=?2,capability_modes=?3 WHERE agent_id=?4 AND revoked_at IS NULL",
+            params![format!("{:?}", req.authority).to_lowercase(), serde_json::to_string(&capabilities).unwrap(), modes_json, agent_id],
         ).map_err(db_err)?;
         if changed == 0 {
             return Err(ApiError::not_found("agent"));
@@ -631,6 +663,48 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             ));
         }
         Ok(())
+    }
+
+    /// Build the JSON string for the `capability_modes` column from a
+    /// capability list and an optional mode map. Capabilities not in the mode
+    /// map default to `Autonomous`.
+    fn serialize_capability_modes(
+        capabilities: &[String],
+        modes: &BTreeMap<String, CapabilityMode>,
+    ) -> String {
+        let map: BTreeMap<&str, &str> = capabilities
+            .iter()
+            .map(|cap| {
+                let mode = modes.get(cap).map(|m| m.as_str()).unwrap_or("autonomous");
+                (cap.as_str(), mode)
+            })
+            .collect();
+        serde_json::to_string(&map).unwrap()
+    }
+
+    /// Parse capability modes from the DB column. Returns a map of
+    /// capability -> mode. Handles NULL (backward compat: all autonomous).
+    fn parse_capability_modes(
+        modes_json: Option<String>,
+        capabilities: &[String],
+    ) -> BTreeMap<String, CapabilityMode> {
+        if let Some(ref json) = modes_json {
+            if let Ok(map) = serde_json::from_str::<BTreeMap<String, String>>(json) {
+                return capabilities
+                    .iter()
+                    .filter_map(|cap| {
+                        map.get(cap)
+                            .and_then(|m| CapabilityMode::from_str_lossy(m))
+                            .map(|mode| (cap.clone(), mode))
+                    })
+                    .collect();
+            }
+        }
+        // Backward compat: all granted capabilities are autonomous.
+        capabilities
+            .iter()
+            .map(|cap| (cap.clone(), CapabilityMode::Autonomous))
+            .collect()
     }
 
     pub fn set_agent_installation(
@@ -2108,7 +2182,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             let conn = self.db.lock().unwrap();
             let mut stmt = conn
                 .prepare(
-                    "SELECT g.agent_id,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom'),g.authority,g.capabilities,g.revoked_at,COALESCE(p.created_at,'1970-01-01T00:00:00Z'),COALESCE(i.status,'not_installed'),i.detail FROM grants g LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id LEFT JOIN agent_runtime_installations i ON i.agent_id=g.agent_id WHERE g.account_id=?1 ORDER BY COALESCE(p.created_at,'') DESC",
+                    "SELECT g.agent_id,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom'),g.authority,g.capabilities,g.capability_modes,g.revoked_at,COALESCE(p.created_at,'1970-01-01T00:00:00Z'),COALESCE(i.status,'not_installed'),i.detail FROM grants g LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id LEFT JOIN agent_runtime_installations i ON i.agent_id=g.agent_id WHERE g.account_id=?1 ORDER BY COALESCE(p.created_at,'') DESC",
                 )
                 .map_err(db_err)?;
             let rows = stmt
@@ -2120,9 +2194,10 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                         r.get::<_, String>(3)?,
                         r.get::<_, String>(4)?,
                         r.get::<_, Option<String>>(5)?,
-                        r.get::<_, String>(6)?,
+                        r.get::<_, Option<String>>(6)?,
                         r.get::<_, String>(7)?,
-                        r.get::<_, Option<String>>(8)?,
+                        r.get::<_, String>(8)?,
+                        r.get::<_, Option<String>>(9)?,
                     ))
                 })
                 .map_err(db_err)?;
@@ -2134,6 +2209,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                     runtime,
                     authority,
                     capabilities,
+                    modes_json,
                     revoked_at,
                     created_at,
                     installation_status,
@@ -2144,15 +2220,18 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                     "observeonly" | "observe_only" => AuthorityMode::ObserveOnly,
                     _ => AuthorityMode::Independent,
                 };
+                let caps: Vec<String> = serde_json::from_str::<BTreeSet<String>>(&capabilities)
+                    .map_err(|e| ApiError::internal(e.to_string()))?
+                    .into_iter()
+                    .collect();
+                let modes = Self::parse_capability_modes(modes_json, &caps);
                 agents.push(AgentSummary {
                     id,
                     name,
                     runtime,
                     authority,
-                    capabilities: serde_json::from_str::<BTreeSet<String>>(&capabilities)
-                        .map_err(|e| ApiError::internal(e.to_string()))?
-                        .into_iter()
-                        .collect(),
+                    capabilities: caps,
+                    capability_modes: modes,
                     status: if revoked_at.is_some() {
                         "revoked".into()
                     } else {
@@ -2337,6 +2416,7 @@ mod tests {
                 account_id: init.account.id.clone(),
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["balance".into()],
+                capability_modes: BTreeMap::new(),
             })
             .unwrap();
         assert!(s
@@ -2467,6 +2547,7 @@ mod tests {
                 account_id: second.id.clone(),
                 authority: AuthorityMode::ObserveOnly,
                 capabilities: vec!["balance".into()],
+                capability_modes: BTreeMap::new(),
             })
             .unwrap();
         assert!(s
@@ -2584,9 +2665,84 @@ mod tests {
                 account_id: init.account.id,
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["invent_money".into()],
+                capability_modes: BTreeMap::new(),
             })
             .unwrap_err();
         assert_eq!(error.code, "invalid_input");
+    }
+
+    #[test]
+    fn require_approval_mode_blocks_execution() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let mut modes = BTreeMap::new();
+        modes.insert("balance".to_string(), CapabilityMode::Autonomous);
+        modes.insert("pay".to_string(), CapabilityMode::RequireApproval);
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Restricted".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "pay".into()],
+                capability_modes: modes,
+            })
+            .unwrap();
+        // balance is autonomous — should pass
+        assert!(s
+            .authenticate(&cred.token, false, Some("balance"), Some(&init.account.id))
+            .is_ok());
+        // pay is require_approval — should be blocked
+        let err = s
+            .authenticate(&cred.token, false, Some("pay"), Some(&init.account.id))
+            .unwrap_err();
+        assert_eq!(err.code, "approval_required");
+    }
+
+    #[test]
+    fn capability_modes_default_to_autonomous_when_not_specified() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Default".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "pay".into()],
+                capability_modes: BTreeMap::new(),
+            })
+            .unwrap();
+        // Both should be autonomous by default
+        assert!(s
+            .authenticate(&cred.token, false, Some("balance"), Some(&init.account.id))
+            .is_ok());
+        assert!(s
+            .authenticate(&cred.token, false, Some("pay"), Some(&init.account.id))
+            .is_ok());
+    }
+
+    #[test]
+    fn introspect_returns_capability_modes() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let mut modes = BTreeMap::new();
+        modes.insert("balance".to_string(), CapabilityMode::Autonomous);
+        modes.insert("refund".to_string(), CapabilityMode::RequireApproval);
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Mixed".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "refund".into()],
+                capability_modes: modes,
+            })
+            .unwrap();
+        let identity = s.introspect(&cred.token).unwrap();
+        let caps_modes = identity.capability_modes.unwrap();
+        assert_eq!(caps_modes.get("balance"), Some(&CapabilityMode::Autonomous));
+        assert_eq!(
+            caps_modes.get("refund"),
+            Some(&CapabilityMode::RequireApproval)
+        );
     }
 
     #[test]
