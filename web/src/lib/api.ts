@@ -21,7 +21,7 @@ type SnapshotResponse = {
     transactions: {
       data: Array<{ id: string; operation_id?: string; description: string; asset: string; created_at: string; entries: Array<{ account: string; amount_atomic: string }> }>
     }
-    agents: Array<{ id: string; name: string; runtime: string; authority: 'independent' | 'shared' | 'observe_only'; capabilities: string[]; status: string; created_at: string; installation_status: 'installed' | 'not_installed' | 'runtime_missing' | 'failed'; installation_detail?: string }>
+    agents: Array<{ id: string; name: string; runtime: string; authority: 'independent' | 'shared' | 'observe_only'; capabilities: string[]; capability_modes?: Record<string, 'autonomous' | 'require_approval'>; status: string; created_at: string; installation_status: 'installed' | 'not_installed' | 'runtime_missing' | 'failed'; installation_detail?: string }>
     providers: Array<{ id: string; capabilities: string[]; state: string; mode: string }>
     capabilities: CapabilityAvailabilityResponse
     outbox_cursor: number
@@ -203,6 +203,7 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
       runtime: agent.runtime === 'openclaw' ? 'OpenClaw' : agent.runtime === 'hermes' ? 'Hermes' : 'Custom',
       mode: agent.authority,
       capabilities: agent.capabilities,
+      capabilityModes: agent.capability_modes,
       lastSeen: new Date(agent.created_at).toLocaleString(),
       status: agent.installation_status === 'installed' ? 'connected' : agent.installation_status === 'failed' ? 'attention' : 'offline',
       installationStatus: agent.installation_status,

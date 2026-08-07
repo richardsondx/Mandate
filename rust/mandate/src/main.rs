@@ -629,6 +629,7 @@ async fn add_agent_credential(a: &Api, x: &AgentArgs) -> Result<AgentCredential,
                 account_id: x.account.clone(),
                 authority,
                 capabilities: x.capabilities.clone(),
+                capability_modes: Default::default(),
             })
             .unwrap(),
         ),

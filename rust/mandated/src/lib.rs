@@ -708,6 +708,7 @@ async fn me(
                 account_name: None,
                 authority: None,
                 capabilities: None,
+                capability_modes: None,
                 status: None,
             }));
         }
@@ -1122,6 +1123,8 @@ struct ConnectAgentRequest {
     runtime: String,
     account_id: String,
     capabilities: Vec<String>,
+    #[serde(default)]
+    capability_modes: std::collections::BTreeMap<String, mandate_core::CapabilityMode>,
 }
 
 async fn connect_agent(
@@ -1138,6 +1141,7 @@ async fn connect_agent(
         account_id: req.account_id,
         authority: AuthorityMode::Independent,
         capabilities: req.capabilities,
+        capability_modes: req.capability_modes,
     })?;
     s.service
         .set_agent_runtime(&credential.agent_id, &req.runtime)?;
@@ -1671,6 +1675,7 @@ mod tests {
                     "transactions".into(),
                     "refund".into(),
                 ],
+                capability_modes: Default::default(),
             })
             .unwrap();
         let agent_resp = app
@@ -1724,6 +1729,7 @@ mod tests {
                 account_id: init.account.id,
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["checkout".into(), "balance".into()],
+                capability_modes: Default::default(),
             })
             .unwrap();
         let response = router(svc)
@@ -1841,6 +1847,7 @@ mod tests {
                 account_id: init.account.id.clone(),
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["balance".into()],
+                capability_modes: Default::default(),
             })
             .unwrap();
         let app = router(svc);
@@ -1877,6 +1884,7 @@ mod tests {
                 account_id: init.account.id.clone(),
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["balance".into()],
+                capability_modes: Default::default(),
             })
             .unwrap();
         let app = router(svc);
@@ -1944,6 +1952,7 @@ mod tests {
                 account_id: init.account.id.clone(),
                 authority: AuthorityMode::Independent,
                 capabilities: vec!["balance".into(), "liquidity_status".into()],
+                capability_modes: Default::default(),
             })
             .unwrap();
         let app = router(svc);

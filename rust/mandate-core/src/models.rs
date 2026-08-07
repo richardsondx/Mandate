@@ -48,12 +48,42 @@ impl From<AtomicAmount> for String {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityMode {
+    #[default]
     Independent,
     Shared,
     ObserveOnly,
+}
+
+/// Per-capability execution authority. "Off" is represented by the capability
+/// being absent from the grant map entirely; only enabled capabilities carry a
+/// mode.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityMode {
+    /// The agent may execute this capability without asking the operator.
+    Autonomous,
+    /// The agent can request this capability, but Mandate will not execute it
+    /// until an operator approves it.
+    RequireApproval,
+}
+
+impl CapabilityMode {
+    pub fn from_str_lossy(s: &str) -> Option<Self> {
+        match s {
+            "autonomous" => Some(Self::Autonomous),
+            "require_approval" | "requireapproval" | "approval" => Some(Self::RequireApproval),
+            _ => None,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Autonomous => "autonomous",
+            Self::RequireApproval => "require_approval",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -210,15 +240,25 @@ pub struct EventRecord {
 pub struct AgentCreateRequest {
     pub name: String,
     pub account_id: String,
+    #[serde(default)]
     pub authority: AuthorityMode,
     pub capabilities: Vec<String>,
+    /// Per-capability execution mode. When provided, each entry maps a
+    /// capability id to its mode (`autonomous` or `require_approval`).
+    /// Capabilities listed in `capabilities` but not in this map default to
+    /// `Autonomous`.
+    #[serde(default)]
+    pub capability_modes: BTreeMap<String, CapabilityMode>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentUpdateRequest {
     pub name: String,
+    #[serde(default)]
     pub authority: AuthorityMode,
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub capability_modes: BTreeMap<String, CapabilityMode>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -358,6 +398,9 @@ pub struct AgentSummary {
     pub runtime: String,
     pub authority: AuthorityMode,
     pub capabilities: Vec<String>,
+    /// Per-capability execution mode for each granted capability.
+    #[serde(default)]
+    pub capability_modes: BTreeMap<String, CapabilityMode>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub installation_status: String,
@@ -392,6 +435,9 @@ pub struct CallerIdentity {
     /// Capabilities granted to the credential.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub capabilities: Option<Vec<String>>,
+    /// Per-capability execution mode for each granted capability.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub capability_modes: Option<BTreeMap<String, CapabilityMode>>,
     /// Grant status (`connected` or `revoked`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,

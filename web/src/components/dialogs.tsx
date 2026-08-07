@@ -289,7 +289,95 @@ export function SandboxSimulatorDialog({ onClose, onSimulate }: { onClose: () =>
   )
 }
 
-const ALL_CAPABILITIES = ['balance', 'receive', 'invoice', 'checkout', 'pay', 'transfer', 'transactions', 'refund', 'liquidity_status', 'fund_spend']
+const ALL_CAPABILITIES = ['balance', 'receive', 'invoice', 'checkout', 'pay', 'transfer', 'transactions', 'refund', 'liquidity_status', 'fund_spend'] as const
+
+type CapabilityState = 'off' | 'autonomous' | 'require_approval'
+
+const CAPABILITY_GROUPS: { label: string; description: string; capabilities: readonly string[] }[] = [
+  { label: 'Understand', description: 'Read financial state', capabilities: ['balance', 'transactions', 'liquidity_status'] },
+  { label: 'Earn', description: 'Bring revenue in', capabilities: ['receive', 'checkout', 'invoice'] },
+  { label: 'Use money', description: 'Spend and move funds', capabilities: ['pay', 'fund_spend', 'transfer'] },
+  { label: 'Customers', description: 'Reverse payments', capabilities: ['refund'] },
+]
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  balance: 'Balance',
+  transactions: 'Transactions',
+  liquidity_status: 'Liquidity status',
+  receive: 'Receive',
+  checkout: 'Checkout',
+  invoice: 'Invoice',
+  pay: 'Pay merchants',
+  fund_spend: 'Fund spending',
+  transfer: 'Transfer funds',
+  refund: 'Refund customers',
+}
+
+const PRESETS: { id: string; label: string; description: string; modes: Record<string, CapabilityState> }[] = [
+  {
+    id: 'observer',
+    label: 'Observer',
+    description: 'Read financial state only',
+    modes: Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, ['balance', 'transactions', 'liquidity_status'].includes(cap) ? 'autonomous' : 'off' as CapabilityState])),
+  },
+  {
+    id: 'autonomous',
+    label: 'Autonomous operator',
+    description: 'Earn, spend, and fund without approval',
+    modes: Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, (cap === 'transfer' ? 'off' : cap === 'refund' ? 'require_approval' : 'autonomous') as CapabilityState])),
+  },
+  {
+    id: 'custom',
+    label: 'Custom',
+    description: 'Choose access and approval per capability',
+    modes: Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, 'autonomous' as CapabilityState])),
+  },
+]
+
+function defaultModes(agent?: Agent): Record<string, CapabilityState> {
+  if (agent?.capabilityModes) {
+    return Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, (agent.capabilityModes?.[cap] ?? 'off') as CapabilityState]))
+  }
+  if (agent?.capabilities) {
+    return Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, (agent.capabilities.includes(cap) ? 'autonomous' : 'off') as CapabilityState]))
+  }
+  return Object.fromEntries(ALL_CAPABILITIES.map(cap => [cap, (cap === 'transfer' ? 'off' : 'autonomous') as CapabilityState]))
+}
+
+function CapabilityTriState({ capability, state, onChange }: { capability: string; state: CapabilityState; onChange: (state: CapabilityState) => void }) {
+  const label = CAPABILITY_LABELS[capability] ?? capability
+  const options: { value: CapabilityState; label: string }[] = [
+    { value: 'off', label: 'Off' },
+    { value: 'autonomous', label: 'Auto' },
+    { value: 'require_approval', label: 'Approve' },
+  ]
+  return (
+    <div className="cap-row">
+      <span className="cap-row-label">{label}</span>
+      <div className="cap-tri-state" role="radiogroup" aria-label={label}>
+        {options.map(option => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={state === option.value}
+            className={`cap-tri-button ${state === option.value ? 'cap-tri-button--active' : ''} ${option.value === 'off' ? 'cap-tri-button--off' : ''} ${option.value === 'require_approval' ? 'cap-tri-button--approve' : ''}`}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function detectPreset(modes: Record<string, CapabilityState>): string {
+  for (const preset of PRESETS) {
+    if (ALL_CAPABILITIES.every(cap => preset.modes[cap] === modes[cap])) return preset.id
+  }
+  return 'custom'
+}
 
 export function AgentDialog({ accountId, detected, source, agent, presetRuntime, onClose, onComplete, onTestConnection }: { accountId: string; detected: { openclaw: boolean; hermes: boolean }; source: DataSource; agent?: Agent; presetRuntime?: 'openclaw' | 'hermes'; onClose: () => void; onComplete: (message: string) => void; onTestConnection?: (agent: Agent) => void }) {
   const [runtime, setRuntime] = useState<'hermes' | 'openclaw' | 'custom'>(presetRuntime ?? 'hermes')
@@ -299,11 +387,25 @@ export function AgentDialog({ accountId, detected, source, agent, presetRuntime,
   const [busy, setBusy] = useState(false)
   const [verificationChecked, setVerificationChecked] = useState(false)
   const [copiedKey, setCopiedKey] = useState('')
-  const [capabilities, setCapabilities] = useState(agent?.capabilities ?? ALL_CAPABILITIES)
-  const [authority, setAuthority] = useState(agent?.mode ?? 'independent')
+  const [modes, setModes] = useState<Record<string, CapabilityState>>(defaultModes(agent))
+  const [activePreset, setActivePreset] = useState(detectPreset(defaultModes(agent)))
 
   const isDetected = runtime === 'hermes' ? detected.hermes : runtime === 'openclaw' ? detected.openclaw : false
-  const toggleCapability = (capability: string) => setCapabilities(current => current.includes(capability) ? current.filter(item => item !== capability) : [...current, capability])
+  const enabledCapabilities = ALL_CAPABILITIES.filter(cap => modes[cap] !== 'off')
+  const capabilityModesMap = Object.fromEntries(enabledCapabilities.map(cap => [cap, modes[cap]]))
+
+  const applyPreset = (presetId: string) => {
+    const preset = PRESETS.find(p => p.id === presetId)
+    if (preset) {
+      setModes(preset.modes)
+      setActivePreset(presetId)
+    }
+  }
+
+  const setCapabilityMode = (capability: string, state: CapabilityState) => {
+    setModes(current => ({ ...current, [capability]: state }))
+    setActivePreset('custom')
+  }
 
   const copySnippet = (key: string, text: string) => {
     navigator.clipboard.writeText(text)
@@ -322,7 +424,7 @@ export function AgentDialog({ accountId, detected, source, agent, presetRuntime,
         setResult({ agent_id: `agent_${runtime}_${Date.now().toString().slice(-4)}`, status: 'created', account_id: accountId })
         onComplete('Scoped access grant created')
       } else {
-        const created = await daemonRequest<Record<string, unknown>>('/v1/admin/agents/connect', { method: 'POST', body: JSON.stringify({ name, runtime, account_id: accountId, capabilities }) })
+        const created = await daemonRequest<Record<string, unknown>>('/v1/admin/agents/connect', { method: 'POST', body: JSON.stringify({ name, runtime, account_id: accountId, capabilities: enabledCapabilities, capability_modes: capabilityModesMap }) })
         setResult(created)
         onComplete('Scoped access grant created')
       }
@@ -352,7 +454,7 @@ export function AgentDialog({ accountId, detected, source, agent, presetRuntime,
   const save = async () => {
     if (!agent) return
     setBusy(true); setError('')
-    try { await daemonRequest(`/v1/admin/agents/${agent.id}`, { method: 'POST', body: JSON.stringify({ name, authority, capabilities }) }); onComplete(`${name} grant updated`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Update failed') } finally { setBusy(false) }
+    try { await daemonRequest(`/v1/admin/agents/${agent.id}`, { method: 'POST', body: JSON.stringify({ name, authority: 'independent', capabilities: enabledCapabilities, capability_modes: capabilityModesMap }) }); onComplete(`${name} grant updated`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Update failed') } finally { setBusy(false) }
   }
 
   const revoke = async () => {
@@ -375,7 +477,7 @@ description: Mandate economic account tools for financial operations
 ---
 # Mandate Capabilities
 This agent has a scoped grant for economic account \`${accountId}\`.
-Allowed capabilities: ${capabilities.join(', ')}.
+Allowed capabilities: ${enabledCapabilities.join(', ')}.
 Always check balances before executing spend or transfer operations.`
 
   return (
@@ -388,11 +490,43 @@ Always check balances before executing spend or transfer operations.`
             </Pill>
             <span>{agent.runtime} · {agent.mode.replace('_', ' ')}</span>
           </div>
-          <div className="form-grid">
-            <label>Identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
-            <label>Authority<select value={authority} onChange={event => setAuthority(event.target.value as Agent['mode'])}><option value="independent">Independent</option><option value="shared">Shared</option><option value="observe_only">Observe only</option></select></label>
+          <label>Identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
+
+          <div className="preset-picker">
+            <span className="preset-label">Access preset</span>
+            <div className="preset-options">
+              {PRESETS.map(preset => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`preset-option ${activePreset === preset.id ? 'preset-option--active' : ''}`}
+                  onClick={() => applyPreset(preset.id)}
+                >
+                  <strong>{preset.label}</strong>
+                  <small>{preset.description}</small>
+                </button>
+              ))}
+            </div>
           </div>
-          <fieldset className="capability-checks"><legend>Allowed operations</legend>{ALL_CAPABILITIES.map(capability => <label key={capability}><input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}</label>)}</fieldset>
+
+          <fieldset className="capability-groups">
+            <legend>Economic capabilities</legend>
+            <p className="capability-groups-hint">Choose what this agent can do and which actions can run autonomously.</p>
+            {CAPABILITY_GROUPS.map(group => (
+              <div key={group.label} className="capability-group">
+                <div className="capability-group-header"><span className="capability-group-label">{group.label}</span><small>{group.description}</small></div>
+                {group.capabilities.map(capability => (
+                  <CapabilityTriState
+                    key={capability}
+                    capability={capability}
+                    state={modes[capability] ?? 'off'}
+                    onChange={state => setCapabilityMode(capability, state)}
+                  />
+                ))}
+              </div>
+            ))}
+          </fieldset>
+
           <div className="form-truth"><ShieldCheck size={16} /><p><strong>Authentication status:</strong> {verificationChecked ? 'Verified via mandate whoami authentication.' : agent.installationDetail ?? (agent.runtime === 'Custom' ? 'Custom agents verify externally—run `mandate whoami` with the credential.' : 'Waiting for external runtime authentication.')}</p></div>
           {error && <p className="form-error">{error}</p>}
           <footer>
@@ -402,7 +536,7 @@ Always check balances before executing spend or transfer operations.`
                 <Play size={13} /> Test connection
               </button>
             )}
-            <button className="primary-button" onClick={save} disabled={busy || capabilities.length === 0}>Save grant</button>
+            <button className="primary-button" onClick={save} disabled={busy || enabledCapabilities.length === 0}>Save grant</button>
           </footer>
         </div>
       ) : (
@@ -424,56 +558,47 @@ Always check balances before executing spend or transfer operations.`
             </button>
           </div>
 
-          <div className="form-grid">
-            <label>Agent identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
-            <label>Authority<select value={authority} onChange={event => setAuthority(event.target.value as Agent['mode'])}><option value="independent">Independent</option><option value="shared">Shared</option><option value="observe_only">Observe only</option></select></label>
+          <label>Agent identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
+
+          <div className="preset-picker">
+            <span className="preset-label">Access preset</span>
+            <div className="preset-options">
+              {PRESETS.map(preset => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`preset-option ${activePreset === preset.id ? 'preset-option--active' : ''}`}
+                  onClick={() => applyPreset(preset.id)}
+                >
+                  <strong>{preset.label}</strong>
+                  <small>{preset.description}</small>
+                </button>
+              ))}
+            </div>
           </div>
 
-          <fieldset className="capability-checks">
-            <legend>Allowed operations (Least privilege grant)</legend>
-            {ALL_CAPABILITIES.map(capability => (
-              <label key={capability}>
-                <input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}
-              </label>
+          <fieldset className="capability-groups">
+            <legend>Economic capabilities (Least privilege grant)</legend>
+            <p className="capability-groups-hint">Choose what this agent can do and which actions can run autonomously.</p>
+            {CAPABILITY_GROUPS.map(group => (
+              <div key={group.label} className="capability-group">
+                <div className="capability-group-header"><span className="capability-group-label">{group.label}</span><small>{group.description}</small></div>
+                {group.capabilities.map(capability => (
+                  <CapabilityTriState
+                    key={capability}
+                    capability={capability}
+                    state={modes[capability] ?? 'off'}
+                    onChange={state => setCapabilityMode(capability, state)}
+                  />
+                ))}
+              </div>
             ))}
           </fieldset>
 
-          <div className="integration-instructions-panel">
-            <p className="eyebrow">{runtime === 'hermes' ? 'Hermes setup' : runtime === 'openclaw' ? 'OpenClaw setup' : 'Custom agent integration'}</p>
-
-            {runtime === 'hermes' && (
-              <div className="instruction-actions">
-                {isDetected && (
-                  <button className="primary-button" onClick={createGrant} disabled={busy}>
-                    {busy ? 'Configuring…' : 'Configure Hermes automatically'} <ArrowRight size={14} />
-                  </button>
-                )}
-                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
-                </button>
-                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
-                </button>
-              </div>
-            )}
-
-            {runtime === 'openclaw' && (
-              <div className="instruction-actions">
-                {isDetected && (
-                  <button className="primary-button" onClick={createGrant} disabled={busy}>
-                    {busy ? 'Configuring…' : 'Configure OpenClaw automatically'} <ArrowRight size={14} />
-                  </button>
-                )}
-                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
-                </button>
-                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
-                </button>
-              </div>
-            )}
-
-            {runtime === 'custom' && (
+          {(runtime === 'hermes' || runtime === 'openclaw') && (
+            <div className="instruction-block">
+              <p className="instruction-eyebrow">After creating the grant</p>
+              <p className="instruction-detail">Run the install command in your terminal. Mandate saves the credential file outside prompt context.</p>
               <div className="instruction-actions">
                 <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
                   <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
@@ -482,8 +607,19 @@ Always check balances before executing spend or transfer operations.`
                   <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {runtime === 'custom' && (
+            <div className="instruction-actions">
+              <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
+                <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
+              </button>
+              <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
+                <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
+              </button>
+            </div>
+          )}
 
           {result && (
             <div className="form-truth form-truth--success">
@@ -497,7 +633,7 @@ Always check balances before executing spend or transfer operations.`
           <footer>
             <button className="secondary-button" onClick={onClose}>Cancel</button>
             {!result ? (
-              <button className="primary-button" onClick={createGrant} disabled={busy || !name.trim() || capabilities.length === 0}>
+              <button className="primary-button" onClick={createGrant} disabled={busy || !name.trim() || enabledCapabilities.length === 0}>
                 {busy ? 'Creating grant…' : 'Create grant'} <ArrowRight size={14} />
               </button>
             ) : (
@@ -511,6 +647,8 @@ Always check balances before executing spend or transfer operations.`
     </Modal>
   )
 }
+
+
 export function SetupChecklistDialog({ providers, agents, onClose, navigate }: { providers: Provider[]; agents: Agent[]; onClose: () => void; navigate: (page: 'account' | 'capabilities' | 'agents') => void }) {
   const connected = providers.filter(provider => provider.status !== 'disconnected')
   const steps = [
