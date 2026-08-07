@@ -228,7 +228,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             return Ok(());
         }
         let grant: Option<(String, String, Option<String>)> = conn.query_row("SELECT account_id,capabilities,capability_modes FROM grants WHERE agent_id=?1 AND revoked_at IS NULL", [&row.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional().map_err(db_err)?;
-        let (granted_account, capabilities, modes_json) = grant.ok_or_else(ApiError::unauthorized)?;
+        let (granted_account, capabilities, modes_json) =
+            grant.ok_or_else(ApiError::unauthorized)?;
         if account.is_some_and(|a| a != granted_account) {
             return Err(ApiError::forbidden(
                 "agent cannot access this economic account",
@@ -244,10 +245,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         // Check per-capability execution mode. RequireApproval blocks
         // execution until an operator approves the operation.
         if let Some(cap) = capability {
-            let modes = Self::parse_capability_modes(
-                modes_json,
-                &caps.iter().cloned().collect::<Vec<_>>(),
-            );
+            let modes =
+                Self::parse_capability_modes(modes_json, &caps.iter().cloned().collect::<Vec<_>>());
             if let Some(CapabilityMode::RequireApproval) = modes.get(cap) {
                 return Err(ApiError::new(
                     "approval_required",
@@ -676,10 +675,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         let map: BTreeMap<&str, &str> = capabilities
             .iter()
             .map(|cap| {
-                let mode = modes
-                    .get(cap)
-                    .map(|m| m.as_str())
-                    .unwrap_or("autonomous");
+                let mode = modes.get(cap).map(|m| m.as_str()).unwrap_or("autonomous");
                 (cap.as_str(), mode)
             })
             .collect();
@@ -2673,6 +2669,80 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(error.code, "invalid_input");
+    }
+
+    #[test]
+    fn require_approval_mode_blocks_execution() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let mut modes = BTreeMap::new();
+        modes.insert("balance".to_string(), CapabilityMode::Autonomous);
+        modes.insert("pay".to_string(), CapabilityMode::RequireApproval);
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Restricted".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "pay".into()],
+                capability_modes: modes,
+            })
+            .unwrap();
+        // balance is autonomous — should pass
+        assert!(s
+            .authenticate(&cred.token, false, Some("balance"), Some(&init.account.id))
+            .is_ok());
+        // pay is require_approval — should be blocked
+        let err = s
+            .authenticate(&cred.token, false, Some("pay"), Some(&init.account.id))
+            .unwrap_err();
+        assert_eq!(err.code, "approval_required");
+    }
+
+    #[test]
+    fn capability_modes_default_to_autonomous_when_not_specified() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Default".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "pay".into()],
+                capability_modes: BTreeMap::new(),
+            })
+            .unwrap();
+        // Both should be autonomous by default
+        assert!(s
+            .authenticate(&cred.token, false, Some("balance"), Some(&init.account.id))
+            .is_ok());
+        assert!(s
+            .authenticate(&cred.token, false, Some("pay"), Some(&init.account.id))
+            .is_ok());
+    }
+
+    #[test]
+    fn introspect_returns_capability_modes() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let mut modes = BTreeMap::new();
+        modes.insert("balance".to_string(), CapabilityMode::Autonomous);
+        modes.insert("refund".to_string(), CapabilityMode::RequireApproval);
+        let cred = s
+            .create_agent(AgentCreateRequest {
+                name: "Mixed".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "refund".into()],
+                capability_modes: modes,
+            })
+            .unwrap();
+        let identity = s.introspect(&cred.token).unwrap();
+        let caps_modes = identity.capability_modes.unwrap();
+        assert_eq!(caps_modes.get("balance"), Some(&CapabilityMode::Autonomous));
+        assert_eq!(
+            caps_modes.get("refund"),
+            Some(&CapabilityMode::RequireApproval)
+        );
     }
 
     #[test]

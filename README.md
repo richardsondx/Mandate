@@ -63,11 +63,30 @@ An allowance eventually runs out. An economy can sustain itself.
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/assets/dashboard-overview.png" alt="Mandate Dashboard — Economic continuity at a glance across Revenue, Treasury, and Spendable balances" width="920">
-</p>
+<table width="100%">
+  <tr>
+    <td width="50%" align="center">
+      <strong>Dashboard Overview</strong><br/>
+      <img src="docs/assets/dashboard-overview.png" alt="Mandate Dashboard — Economic continuity at a glance" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <strong>Balances & Liquidity</strong><br/>
+      <img src="docs/assets/balances-liquidity.png" alt="Balances & Liquidity — Real-time balances and automated replenishment routes" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>Normalized Activity Log</strong><br/>
+      <img src="docs/assets/economic-activity.png" alt="Economic Activity — Unified ledger log across different rails" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <strong>Capability Reference</strong><br/>
+      <img src="docs/assets/capability-reference.png" alt="Capability Reference — Standardized interface for human-intent verification" width="100%">
+    </td>
+  </tr>
+</table>
 
-*The Mandate dashboard gives you a real-time view of where your money lives across connected providers, how much is available or reserved, which economic capabilities are ready, which agents have access, and every ledgered movement across the account.*
+*The Mandate dashboard provides full economic visibility: a consolidated overview, granular account and liquidity route statuses, normalized ledger activity logs, and a standard capability reference guide.*
 
 ## Project status
 
