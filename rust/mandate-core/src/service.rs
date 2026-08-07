@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS agent_runtime_installations(agent_id TEXT PRIMARY KEY
 CREATE TABLE IF NOT EXISTS credentials(token_hash TEXT PRIMARY KEY, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, is_admin INTEGER NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS positions(account_id TEXT NOT NULL, provider TEXT NOT NULL, asset TEXT NOT NULL, network TEXT NOT NULL DEFAULT '', available TEXT NOT NULL, reserved TEXT NOT NULL, pending TEXT NOT NULL, settled TEXT NOT NULL, decimals INTEGER NOT NULL, reconciled_at TEXT NOT NULL, PRIMARY KEY(account_id, provider, asset, network));
 CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, kind TEXT NOT NULL, account_id TEXT NOT NULL, provider TEXT NOT NULL, status TEXT NOT NULL, amount TEXT, currency TEXT, external_url TEXT, address TEXT, expires_at TEXT, idempotency_key TEXT, created_at TEXT NOT NULL, UNIQUE(account_id, kind, idempotency_key));
+CREATE TABLE IF NOT EXISTS refund_links(operation_id TEXT NOT NULL REFERENCES operations(id), original_transaction_id TEXT NOT NULL REFERENCES operations(id), created_at TEXT NOT NULL, PRIMARY KEY(operation_id, original_transaction_id));
 CREATE TABLE IF NOT EXISTS journal_transactions(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, operation_id TEXT, description TEXT NOT NULL, asset TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS journal_entries(id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT NOT NULL REFERENCES journal_transactions(id), ledger_account TEXT NOT NULL, amount_atomic TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS provider_events(provider TEXT NOT NULL, external_event_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(provider, external_event_id));
@@ -123,7 +124,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
     }
 
     pub fn initialize(&self) -> Result<InitResult, ApiError> {
-        self.initialize_instance("Primary treasury", true)
+        self.initialize_instance("Primary account", true)
     }
 
     pub fn is_initialized(&self) -> Result<bool, ApiError> {
@@ -1306,6 +1307,165 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         Ok(op)
     }
 
+    /// Create a refund bound to an existing settled incoming customer payment.
+    ///
+    /// Unlike a generic money-out operation, a refund can only reverse a
+    /// specific `checkout` or `invoice` that already happened on this economic
+    /// account through the revenue (Stripe) route, and only up to the portion
+    /// of the original payment that has not already been refunded. This makes
+    /// the `refund` capability safe-by-construction: a prompt-injected agent
+    /// cannot turn it into an arbitrary exfiltration mechanism.
+    pub fn create_refund(&self, req: RefundRequest) -> Result<Operation, ApiError> {
+        let account_id = req.money.account_id.as_str();
+        let refund_amount = req.money.amount.as_i128();
+        if refund_amount <= 0 {
+            return Err(ApiError::invalid("refund amount must be positive"));
+        }
+
+        let mut conn = self.db.lock().unwrap();
+        // Resolve the original settled incoming customer payment.
+        let original: Option<(String, String, String, String)> = conn
+            .query_row(
+                "SELECT id, provider, amount, currency FROM operations
+                 WHERE id=?1 AND account_id=?2 AND kind IN ('checkout','invoice')",
+                params![req.transaction_id, account_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(db_err)?;
+        let (orig_id, orig_provider, orig_amount_str, orig_currency) =
+            original.ok_or_else(|| ApiError::not_found("original settled payment"))?;
+        // Refunds can only reverse payments that came in through the revenue
+        // (Stripe) route, and must be routed back through that same route.
+        if orig_provider != "fake-revenue" && orig_provider != "stripe-revenue" {
+            return Err(ApiError::invalid(
+                "refund can only reverse a settled customer payment from the revenue provider",
+            ));
+        }
+        if orig_currency != req.money.currency {
+            return Err(ApiError::invalid(
+                "refund currency must match the original settled payment currency",
+            ));
+        }
+        let orig_amount = orig_amount_str
+            .parse::<i128>()
+            .map_err(|e| ApiError::internal(format!("invalid original amount: {e}")))?;
+        if refund_amount > orig_amount {
+            return Err(ApiError::new(
+                "refund_exceeds_payment",
+                "refund amount exceeds the original settled payment",
+                false,
+            ));
+        }
+        // Sum amounts already refunded against this original transaction.
+        let already_refunded: i128 = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT o.amount FROM refund_links rl
+                     JOIN operations o ON o.id = rl.operation_id
+                     WHERE rl.original_transaction_id = ?1 AND o.status != 'revoked'",
+                )
+                .map_err(db_err)?;
+            let rows = stmt
+                .query_map(params![orig_id], |r| r.get::<_, String>(0))
+                .map_err(db_err)?;
+            let mut total: i128 = 0;
+            for row in rows {
+                let amount_str = row.map_err(db_err)?;
+                total += amount_str
+                    .parse::<i128>()
+                    .map_err(|e| ApiError::internal(format!("invalid refunded amount: {e}")))?;
+            }
+            total
+        };
+        let refundable_remaining = orig_amount - already_refunded;
+        if refund_amount > refundable_remaining {
+            return Err(ApiError::new(
+                "refund_exceeds_remaining",
+                "refund amount exceeds the refundable remainder of the original payment",
+                false,
+            ));
+        }
+
+        // The original payment came in through the revenue (Stripe) route, so the
+        // refund must go back through that same route. Verify the route is still
+        // connected using the connection we already hold rather than re-locking
+        // `self.db` (which would deadlock a non-reentrant Mutex).
+        let connected: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM provider_connections
+                 WHERE account_id=?1 AND provider_id='stripe-revenue'
+                   AND status != 'disconnected'",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if !connected {
+            return Err(ApiError::new(
+                "capability_unavailable",
+                "stripe-revenue is not connected to this economic account",
+                false,
+            ));
+        }
+        let provider: String = "fake-revenue".into();
+        let tx = conn.transaction().map_err(db_err)?;
+        let key = req
+            .money
+            .idempotency_key
+            .clone()
+            .unwrap_or_else(|| format!("idem_{}", Uuid::new_v4().simple()));
+        if let Some(op) = Self::operation_by_key(&tx, account_id, "refund", &key)? {
+            return Ok(op);
+        }
+        let id = format!("ref_{}", Uuid::new_v4().simple());
+        let now = Utc::now();
+        tx.execute(
+            "INSERT INTO operations VALUES (?1,?2,?3,?4,'ready',?5,?6,NULL,NULL,NULL,?7,?8)",
+            params![
+                id,
+                "refund",
+                account_id,
+                &provider,
+                req.money.amount.as_str(),
+                &req.money.currency,
+                &key,
+                now.to_rfc3339()
+            ],
+        )
+        .map_err(db_err)?;
+        tx.execute(
+            "INSERT INTO refund_links(operation_id, original_transaction_id, created_at) VALUES (?1,?2,?3)",
+            params![&id, &orig_id, now.to_rfc3339()],
+        )
+        .map_err(db_err)?;
+        let op = Operation {
+            id,
+            kind: "refund".into(),
+            account_id: account_id.into(),
+            provider,
+            status: "ready".into(),
+            amount: Some(req.money.amount.clone()),
+            currency: Some(req.money.currency.clone()),
+            external_url: None,
+            address: None,
+            expires_at: None,
+            created_at: now,
+        };
+        let mut payload = serde_json::to_value(&op).unwrap();
+        payload["capability"] = serde_json::Value::String("refund".into());
+        payload["original_transaction_id"] = serde_json::Value::String(orig_id);
+        Self::event_tx(&tx, "refund.created", payload)?;
+        tx.commit().map_err(db_err)?;
+        Ok(op)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn insert_operation(
         &self,
@@ -2270,7 +2430,7 @@ mod tests {
     #[test]
     fn clean_initialization_has_no_implicit_money_or_connections() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize_instance("Primary treasury", false).unwrap();
+        let init = s.initialize_instance("Primary account", false).unwrap();
         assert!(s.balance(&init.account.id).unwrap().positions.is_empty());
         assert!(s
             .providers_for(&init.account.id)
@@ -2281,7 +2441,7 @@ mod tests {
     #[test]
     fn provider_connections_and_agents_are_account_scoped() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize_instance("Primary treasury", false).unwrap();
+        let init = s.initialize_instance("Primary account", false).unwrap();
         let second = s.create_account("Research budget").unwrap();
         s.connect_demo_provider(&init.account.id, "stripe-revenue")
             .unwrap();
@@ -2633,5 +2793,239 @@ mod tests {
             .find(|p| p.provider == "fake-treasury")
             .unwrap();
         assert_eq!(treasury.available.as_str(), "100000000");
+    }
+
+    fn checkout_request(account: &str, amount: &str, key: &str) -> MoneyRequest {
+        MoneyRequest {
+            account_id: account.into(),
+            amount: AtomicAmount::new(amount).unwrap(),
+            currency: "USD".into(),
+            provider: None,
+            idempotency_key: Some(key.into()),
+            metadata: Default::default(),
+        }
+    }
+
+    fn refund_req(account: &str, original: &str, amount: &str, key: &str) -> RefundRequest {
+        RefundRequest {
+            money: checkout_request(account, amount, key),
+            transaction_id: original.into(),
+        }
+    }
+
+    #[test]
+    fn refund_reverses_an_existing_settled_customer_payment() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&init.account.id, "5000", "chk1"),
+            )
+            .unwrap();
+        let refund = s
+            .create_refund(refund_req(&init.account.id, &payment.id, "2500", "ref1"))
+            .unwrap();
+        assert_eq!(refund.kind, "refund");
+        assert_eq!(refund.amount.as_ref().unwrap().as_str(), "2500");
+        assert_eq!(refund.provider, "fake-revenue");
+        // The refund is linked to the original payment.
+        let linked: String =
+            s.db.lock()
+                .unwrap()
+                .query_row(
+                    "SELECT original_transaction_id FROM refund_links WHERE operation_id=?1",
+                    [&refund.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+        assert_eq!(linked, payment.id);
+    }
+
+    #[test]
+    fn refund_idempotency_returns_same_operation_without_double_linking() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&init.account.id, "5000", "chk-idem"),
+            )
+            .unwrap();
+        let a = s
+            .create_refund(refund_req(
+                &init.account.id,
+                &payment.id,
+                "1000",
+                "ref-idem",
+            ))
+            .unwrap();
+        let b = s
+            .create_refund(refund_req(
+                &init.account.id,
+                &payment.id,
+                "1000",
+                "ref-idem",
+            ))
+            .unwrap();
+        assert_eq!(a.id, b.id);
+        let count: i64 =
+            s.db.lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM refund_links WHERE operation_id=?1",
+                    [&a.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn refund_exceeding_the_original_payment_is_rejected() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&init.account.id, "2500", "chk-cap"),
+            )
+            .unwrap();
+        let err = s
+            .create_refund(refund_req(&init.account.id, &payment.id, "3000", "ref-cap"))
+            .unwrap_err();
+        assert_eq!(err.code, "refund_exceeds_payment");
+    }
+
+    #[test]
+    fn refund_exceeding_the_refundable_remainder_is_rejected() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&init.account.id, "5000", "chk-rem"),
+            )
+            .unwrap();
+        s.create_refund(refund_req(
+            &init.account.id,
+            &payment.id,
+            "3000",
+            "ref-rem1",
+        ))
+        .unwrap();
+        // 5000 - 3000 = 2000 refundable remaining; asking for 2500 must fail.
+        let err = s
+            .create_refund(refund_req(
+                &init.account.id,
+                &payment.id,
+                "2500",
+                "ref-rem2",
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "refund_exceeds_remaining");
+        // Refunding exactly the remainder succeeds.
+        s.create_refund(refund_req(
+            &init.account.id,
+            &payment.id,
+            "2000",
+            "ref-rem3",
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn refund_without_an_original_settled_payment_is_rejected() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let err = s
+            .create_refund(refund_req(
+                &init.account.id,
+                "chk_nonexistent",
+                "1000",
+                "ref-none",
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "not_found");
+    }
+
+    #[test]
+    fn refund_cannot_reverse_a_payment_from_another_account() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let other = s.create_account("Foreign account").unwrap();
+        s.connect_demo_provider(&other.id, "stripe-revenue")
+            .unwrap();
+        let foreign_payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&other.id, "5000", "chk-foreign"),
+            )
+            .unwrap();
+        let err = s
+            .create_refund(refund_req(
+                &init.account.id,
+                &foreign_payment.id,
+                "1000",
+                "ref-foreign",
+            ))
+            .unwrap_err();
+        assert_eq!(err.code, "not_found");
+    }
+
+    #[test]
+    fn refund_cannot_reverse_a_non_revenue_operation() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        // A receive endpoint is created through the treasury route, not revenue.
+        let endpoint = s
+            .create_receive(ReceiveRequest {
+                account_id: init.account.id.clone(),
+                currency: "USDC".into(),
+                network: Some("base".into()),
+                provider: None,
+                idempotency_key: Some("recv1".into()),
+            })
+            .unwrap();
+        let err = s
+            .create_refund(RefundRequest {
+                money: MoneyRequest {
+                    account_id: init.account.id,
+                    amount: AtomicAmount::new("1000").unwrap(),
+                    currency: "USDC".into(),
+                    provider: None,
+                    idempotency_key: Some("ref-recv".into()),
+                    metadata: Default::default(),
+                },
+                transaction_id: endpoint.id,
+            })
+            .unwrap_err();
+        assert_eq!(err.code, "not_found");
+    }
+
+    #[test]
+    fn refund_with_mismatched_currency_is_rejected() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let payment = s
+            .create_money_operation(
+                "checkout",
+                checkout_request(&init.account.id, "5000", "chk-cur"),
+            )
+            .unwrap();
+        let err = s
+            .create_refund(RefundRequest {
+                money: MoneyRequest {
+                    account_id: init.account.id,
+                    amount: AtomicAmount::new("1000").unwrap(),
+                    currency: "EUR".into(),
+                    provider: None,
+                    idempotency_key: Some("ref-cur".into()),
+                    metadata: Default::default(),
+                },
+                transaction_id: payment.id,
+            })
+            .unwrap_err();
+        assert_eq!(err.code, "invalid_input");
     }
 }

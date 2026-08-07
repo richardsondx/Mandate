@@ -227,6 +227,12 @@ h3 { font-size: .98rem; font-weight: 600; letter-spacing: -.015em; }
 .big-amount sup { margin-right: 5px; font-size: .38em; vertical-align: top; position: relative; top: .22em; color: #b9c8c0; }
 .balance-copy > p { margin-top: 11px; color: #aebdb6; font-size: .72rem; }
 .balance-copy > p span[aria-hidden] { padding: 0 4px; }
+.economic-states { margin-top: 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.economic-state { display: flex; flex-direction: column; gap: 4px; }
+.economic-state-label { display: inline-flex; align-items: center; gap: 6px; color: #b9c8c0; font-size: .62rem; font-weight: 560; letter-spacing: .12em; text-transform: uppercase; }
+.economic-state-value { margin-top: 4px; font-size: clamp(1.4rem, 2.6vw, 2rem); line-height: 1.05; letter-spacing: -.04em; font-weight: 540; font-variant-numeric: tabular-nums; color: #f3faf5; }
+.economic-state small { margin-top: 4px; color: #93a89d; font-size: .62rem; line-height: 1.4; }
+
 .positive-text { color: #54a982 !important; }
 .balance-link { position: absolute; z-index: 2; top: 35px; right: 38px; display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: #d7e6de; font-size: .72rem; cursor: pointer; }
 .flow-line { position: absolute; z-index: 1; left: 38px; right: 38px; bottom: 26px; display: grid; grid-template-columns: repeat(4, 1fr); }
@@ -816,6 +822,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .page-intro { min-height: 0; align-items: flex-start; flex-direction: column; }
   .page-intro h1 { font-size: 2.15rem; }
   .hero-balance { min-height: 365px; padding: 26px 22px; }
+  .economic-states { grid-template-columns: 1fr; gap: 16px; }
+  .economic-state-value { font-size: 1.55rem; }
   .balance-link { top: 27px; right: 22px; }
   .big-amount { margin-top: 18px; font-size: 3.1rem; }
   .flow-line { left: 22px; right: 22px; bottom: 23px; }

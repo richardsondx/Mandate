@@ -1,16 +1,31 @@
+<div align="center">
+
 # Mandate
 
-**One account. Many rails.**
+**One economy. Any provider.**
 
-<p align="center">
-  <img src="docs/assets/dashboard-overview.png" alt="Mandate Dashboard — Economic continuity at a glance across Receive, Hold, and Spend positions" width="920">
+<p>
+  <a href="https://github.com/richardsondx/mandate/stargazers"><img src="https://img.shields.io/github/stars/richardsondx/mandate?style=flat-square&color=DAA520" alt="GitHub Stars"></a>
+  <a href="https://github.com/richardsondx/mandate/watchers"><img src="https://img.shields.io/github/watchers/richardsondx/mandate?style=flat-square" alt="GitHub Watchers"></a>
+  <a href="https://github.com/richardsondx/mandate/network/members"><img src="https://img.shields.io/github/forks/richardsondx/mandate?style=flat-square" alt="GitHub Forks"></a>
+  <a href="https://x.com/richardsondx"><img src="https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white" alt="X Follow"></a>
 </p>
 
-Mandate is a macOS-first, local economic operating system for autonomous agents.
-It gives CLI-native and tool-native agents one stable account interface while
-keeping provider positions, permissions, and accounting explicit.
+<p>
+  <a href="README.md">English</a> | <a href="README-ZH.md">中文文档</a>
+</p>
 
-This repository contains the v0.1 test-route MVP:
+</div>
+
+Mandate is an open-source economic layer for AI agents.
+
+It gives an agent one account to receive revenue, hold funds, move money between financial systems, and spend through the providers you choose.
+
+Stripe, wallets, banks, card issuers, stablecoins, and future payment systems stay interchangeable underneath.
+
+The agent sees one economy instead of a collection of disconnected financial accounts.
+
+This repository contains:
 
 - `mandated` Rust daemon and encrypted double-entry ledger
 - `mandate` deterministic CLI
@@ -20,22 +35,43 @@ This repository contains the v0.1 test-route MVP:
 - Coinbase CDP Wallet, Stripe Revenue, and Lithic Card providers
 - OpenClaw skill and Hermes MCP integration assets
 
-Mandate is orchestration software. It is not a bank, wallet custodian, card
-issuer, or legal principal. Completing the local test route does not mean that
-liquidity can already move automatically between providers.
+Mandate does not hold or issue money itself. It connects the financial providers you choose and gives your agents one consistent way to use them.
+
+## Overview
+
+AI agents can already receive money, hold balances, and make payments. The problem is that those capabilities often live in separate financial systems.
+
+An agent might earn revenue through one provider, hold funds in another, and spend through a third. Without a way to connect those systems, a human still has to move money between them, and the agent stops being truly autonomous.
+
+Mandate gives agents one economic account across those providers, so money earned in one place can become usable purchasing power somewhere else without human intervention.
+
+## Economic Autonomy
+
+<p align="center">
+  <img src="docs/assets/economic-autonomy.png" alt="Mandate — Earn, hold, move, spend, and reinvest across providers as one continuous economy" width="920">
+</p>
+
+A useful test for economic autonomy is simple: give an AI agent its first $100, then step away.
+
+Can it earn revenue, pay for the tools and services it needs, renew subscriptions, and reinvest what it earns without asking a human to move money or approve every transaction?
+
+That is the difference between spending access and economic autonomy.
+
+Mandate is built for the latter: a continuous loop where an agent can earn, hold, move, spend, and reuse its own money to keep operating and growing.
+
+An allowance eventually runs out. An economy can sustain itself.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/assets/dashboard-overview.png" alt="Mandate Dashboard — Economic continuity at a glance across Revenue, Treasury, and Spendable balances" width="920">
+</p>
+
+*The Mandate dashboard gives you a real-time view of where your money lives across connected providers, how much is available or reserved, which economic capabilities are ready, which agents have access, and every ledgered movement across the account.*
 
 ## Project status
 
-Mandate is an early open-source v0.1 implementation. The encrypted local
-runtime, CLI, MCP adapter, dashboard, account isolation, deterministic demo
-providers, agent grants, and double-entry ledger are functional. The dashboard
-can validate Coinbase, Stripe, and Lithic test/live credentials through the
-bundled out-of-process adapters and store their configuration in macOS
-Keychain. Provider-backed operation dispatch and reconciliation remain release
-gates, so verified credentials are shown as **Live ready**, not Live.
-
-See the [build ledger](docs/BUILD_LEDGER.md) for implemented scope and the
-[completion brief](docs/COMPLETION_BRIEF.md) for the definition of done.
+See the [build ledger](docs/BUILD_LEDGER.md) for implemented scope and the [completion brief](docs/COMPLETION_BRIEF.md) for the definition of done.
 
 ## Quick start
 
@@ -199,7 +235,7 @@ credential forms now launch the bundled adapter, validate access, and store the
 configuration in Keychain. Until provider-backed operation dispatch and
 reconciliation are accepted, that state is labeled **Credentials verified**;
 it does not enable money movement. Mandate never combines test and live
-positions into one balance.
+balances into one.
 
 The regular Capabilities setup connects provider Test/Sandbox or Live
 credentials; it does not offer a one-click demo balance. Illustrative demo data
@@ -215,7 +251,7 @@ The user-usable acceptance boundary is in [the completion brief](docs/COMPLETION
 ## Accounts and agents
 
 A single local operator owns one or more economic accounts. Each account has
-independent provider connections, positions, reservations, journal entries,
+independent provider connections, balances, reservations, journal entries,
 and grants. Multiple OpenClaw, Hermes, or custom agents may share one account,
 but every agent uses its own scoped credential. Create separate accounts
 whenever funds, provider routes, permissions, or audit history should not be
@@ -245,11 +281,6 @@ pnpm --dir packages/mcp start
 
 See `integrations/openclaw` and `integrations/hermes` for runtime-specific
 assets. Agent credentials are scoped and are never administrator credentials.
-
-## Mandate Dashboard
-
-The Mandate dashboard provides a real-time view of provider positions, capability readiness, connected agents, and double-entry ledger activity across your economic accounts. See [docs/assets/dashboard-overview.png](docs/assets/dashboard-overview.png).
-
 ## Repository map
 
 - `rust/mandate-core` — domain model, authorization, ledger, workflows

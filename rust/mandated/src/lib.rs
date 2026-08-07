@@ -194,7 +194,7 @@ async fn initialize(
     Json(req): Json<InitRequest>,
 ) -> Result<Json<InitResult>, ApiErrorResponse> {
     Ok(Json(s.service.initialize_instance(
-        req.account_name.as_deref().unwrap_or("Primary treasury"),
+        req.account_name.as_deref().unwrap_or("Primary account"),
         req.demo.unwrap_or(false),
     )?))
 }
@@ -407,7 +407,7 @@ async fn refund(
         Some(&req.money.account_id),
         true,
     )?;
-    Ok(Json(s.service.create_money_operation("refund", req.money)?))
+    Ok(Json(s.service.create_refund(req)?))
 }
 
 #[derive(Deserialize)]
@@ -429,7 +429,14 @@ async fn quote_movement_handler(
     headers: HeaderMap,
     Json(req): Json<mandate_core::MovementQuoteRequest>,
 ) -> Result<Json<mandate_core::MovementQuote>, ApiErrorResponse> {
-    auth(&s, &headers, false, None, Some(&req.account_id), true)?;
+    auth(
+        &s,
+        &headers,
+        false,
+        Some("liquidity_status"),
+        Some(&req.account_id),
+        true,
+    )?;
     Ok(Json(s.service.quote_movement(req)?))
 }
 
@@ -438,7 +445,14 @@ async fn execute_movement_handler(
     headers: HeaderMap,
     Json(quote): Json<mandate_core::MovementQuote>,
 ) -> Result<Json<mandate_core::MovementRecord>, ApiErrorResponse> {
-    auth(&s, &headers, false, None, Some(&quote.account_id), true)?;
+    auth(
+        &s,
+        &headers,
+        false,
+        Some("fund_spend"),
+        Some(&quote.account_id),
+        true,
+    )?;
     Ok(Json(s.service.execute_movement(quote)?))
 }
 
@@ -1848,5 +1862,110 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn movement_endpoints_require_capability_grants_for_agents() {
+        let svc = MandateService::in_memory().unwrap();
+        let init = svc.initialize().unwrap();
+        svc.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        // Agent granted only balance has no money-movement authority.
+        let credential = svc
+            .create_agent(AgentCreateRequest {
+                name: "Observer".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into()],
+            })
+            .unwrap();
+        let app = router(svc);
+        let auth = format!("Bearer {}", credential.token);
+
+        // Quoting a movement requires the liquidity_status capability.
+        let quote_resp = app
+            .clone()
+            .oneshot(
+                Request::post("/v1/movements/quote")
+                    .header("authorization", &auth)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "account_id": init.account.id,
+                            "amount": "2500",
+                            "source_provider": "stripe-revenue",
+                            "destination_provider": "coinbase-cdp-wallet",
+                            "asset": "USD"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(quote_resp.status(), StatusCode::FORBIDDEN);
+
+        // Executing a movement requires the fund_spend capability.
+        let exec_resp = app
+            .oneshot(
+                Request::post("/v1/movements")
+                    .header("authorization", &auth)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "quote_id": "mqt_unused",
+                            "account_id": init.account.id,
+                            "input_amount": "2500",
+                            "input_asset": {"code": "USD"},
+                            "expected_output_amount": "2500",
+                            "output_asset": {"code": "USD"},
+                            "fees_atomic": "0",
+                            "estimated_duration_seconds": 300,
+                            "expires_at": "2026-12-31T00:00:00Z",
+                            "legs": [],
+                            "autonomous": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(exec_resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn quote_movement_succeeds_for_agent_with_liquidity_status() {
+        let svc = MandateService::in_memory().unwrap();
+        let init = svc.initialize().unwrap();
+        let credential = svc
+            .create_agent(AgentCreateRequest {
+                name: "Liquidity reader".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into(), "liquidity_status".into()],
+            })
+            .unwrap();
+        let app = router(svc);
+        let resp = app
+            .oneshot(
+                Request::post("/v1/movements/quote")
+                    .header("authorization", format!("Bearer {}", credential.token))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "account_id": init.account.id,
+                            "amount": "2500",
+                            "source_provider": "stripe-revenue",
+                            "destination_provider": "coinbase-cdp-wallet",
+                            "asset": "USD"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

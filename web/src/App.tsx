@@ -179,19 +179,24 @@ function PageIntro({ kicker, title, description, actions }: { kicker?: string; t
 }
 
 function Overview({ data, source, environment, navigate, newOperation, openSimulator, onTestConnection }: { data: DashboardData; source: DataSource; environment: EnvironmentMode; navigate: (id: NavId) => void; newOperation: () => void; openSimulator: () => void; onTestConnection?: (agent: Agent) => void }) {
-  const reserved = data.positions.reduce((total, position) => total + Number(position.reserved) / (10 ** position.decimals), 0)
   const connectedProviders = data.providers.filter(provider => provider.status !== 'disconnected')
   const topology = getAccountTopology(data)
+  const receiveProvider = connectedProviders.find(provider => provider.category === 'Receive')
+  const holdProvider = connectedProviders.find(provider => provider.category === 'Hold')
+  const spendProvider = connectedProviders.find(provider => provider.category === 'Spend')
+  const revenuePosition = data.positions.find(position => receiveProvider && (position.provider === receiveProvider.id || position.provider.includes('stripe') || position.provider.includes('revenue')))
+  const treasuryPosition = data.positions.find(position => holdProvider && (position.provider === holdProvider.id || position.provider.includes('coinbase') || position.provider.includes('treasury')))
+  const spendPosition = data.positions.find(position => spendProvider && (position.provider === spendProvider.id || position.provider.includes('lithic') || position.provider.includes('card')))
   const flowStages = [
-    { name: 'Receive', value: connectedProviders.some(provider => provider.category === 'Receive') ? 'Ready' : 'Not connected', detail: 'Provider route' },
-    { name: 'Hold', value: data.estimateUsd === '—' ? 'See positions' : `$${data.estimateUsd}`, detail: `${data.positions.length} positions` },
-    { name: 'Spend', value: `$${reserved.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, detail: 'Currently reserved' },
+    { name: 'Receive', value: connectedProviders.some(provider => provider.category === 'Receive') ? 'Ready' : 'Not connected', detail: 'Capability' },
+    { name: 'Hold', value: connectedProviders.some(provider => provider.category === 'Hold') ? 'Ready' : 'Not connected', detail: 'Capability' },
+    { name: 'Spend', value: connectedProviders.some(provider => provider.category === 'Spend') ? 'Ready' : 'Not connected', detail: 'Capability' },
   ]
   if (source === 'daemon' && connectedProviders.length === 0) return <div className="page page-enter">
     <PageIntro kicker="Welcome to Mandate" title={`Set up ${data.accountName}.`} description="This economic account is empty. Connect only the capabilities this account needs, then assign one or more scoped agents." />
     <section className="zero-state-hero"><div className="zero-state-line"><span>1</span><i /><span>2</span><i /><span>3</span></div><div><p className="eyebrow">Your first working account</p><h2>Connect a provider route, add an agent, then run a test operation.</h2><p>Nothing has been preloaded. Demo routes are optional and remain visibly separate from future external provider connections.</p></div><button className="primary-button" onClick={() => navigate('capabilities')}>Choose capabilities <ArrowRight size={15} /></button></section>
     <div className="setup-checklist"><button onClick={() => navigate('capabilities')}><span>1</span><div><strong>Connect a capability</strong><small>Receive with Stripe, hold with Coinbase, or spend with Lithic.</small></div><ArrowRight size={15} /></button><button onClick={() => navigate('agents')}><span>2</span><div><strong>Connect an agent</strong><small>Every agent receives a scoped identity for this account.</small></div><ArrowRight size={15} /></button><button onClick={newOperation} disabled><span>3</span><div><strong>Test a capability</strong><small>Run a test operation once a provider route is connected.</small></div><ArrowRight size={15} /></button></div>
-    <div className="truth-note zero-state-note"><ShieldCheck size={16} /><p><strong>Accounts are independent boundaries.</strong> Provider positions, agent grants, transactions, and reservations belong to this account only.</p></div>
+    <div className="truth-note zero-state-note"><ShieldCheck size={16} /><p><strong>Accounts are independent boundaries.</strong> Balances, agent grants, transactions, and reservations belong to this account only.</p></div>
   </div>
   return (
     <div className="page page-enter">
@@ -231,11 +236,27 @@ function Overview({ data, source, environment, navigate, newOperation, openSimul
       )}
       <section className="hero-balance">
         <div className="balance-copy">
-          <div className="balance-label"><span>Estimated account value</span><Pill tone="neutral">USD estimate</Pill></div>
-          <div className="big-amount">{data.estimateUsd === '—' ? '—' : <><sup>$</sup>{data.estimateUsd}</>}</div>
-          <p>{data.estimateUsd === '—' ? 'No consolidated valuation is available; review each provider position.' : `${source === 'daemon' ? 'Provider positions' : 'Illustrative preview'} · Valued ${data.valuationAt}`}</p>
+          <div className="balance-label"><span>Where your money lives</span><Pill tone="neutral">{data.positions.length} connected balances</Pill></div>
+          <div className="economic-states">
+            <div className="economic-state">
+              <span className="economic-state-label"><ArrowDownLeft size={14} /> Revenue</span>
+              <strong className="economic-state-value">{revenuePosition ? `${formatAtomic(revenuePosition.available, revenuePosition.decimals)}` : '—'}{revenuePosition ? ` ${revenuePosition.asset}` : ''}</strong>
+              <small>{revenuePosition ? `${receiveProvider ? receiveProvider.name : 'Receive provider'}${Number(revenuePosition.pending) > 0 ? ` · +${formatAtomic(revenuePosition.pending, revenuePosition.decimals)} pending` : ''}` : 'No revenue route connected'}</small>
+            </div>
+            <div className="economic-state">
+              <span className="economic-state-label"><CircleDollarSign size={14} /> Treasury</span>
+              <strong className="economic-state-value">{treasuryPosition ? `${formatAtomic(treasuryPosition.available, treasuryPosition.decimals)}` : '—'}{treasuryPosition ? ` ${treasuryPosition.asset}` : ''}</strong>
+              <small>{treasuryPosition ? `${holdProvider ? holdProvider.name : 'Hold provider'} · operating capital` : 'No treasury route connected'}</small>
+            </div>
+            <div className="economic-state">
+              <span className="economic-state-label"><ArrowUpRight size={14} /> Spendable</span>
+              <strong className="economic-state-value">{spendPosition ? `${formatAtomic(spendPosition.available, spendPosition.decimals)}` : '—'}{spendPosition ? ` ${spendPosition.asset}` : ''}</strong>
+              <small>{spendPosition ? `${spendProvider ? spendProvider.name : 'Spend provider'} · ready for agent spending` : 'No spend route connected'}</small>
+            </div>
+          </div>
+          <p>{data.estimateUsd === '—' ? 'No consolidated valuation is available; review each connected balance.' : `Estimated account value $${data.estimateUsd} · ${source === 'daemon' ? 'Provider balances' : 'Illustrative preview'} · Valued ${data.valuationAt}`}</p>
         </div>
-        <button className="balance-link" onClick={() => navigate('account')}>View positions <ArrowUpRight size={15} /></button>
+        <button className="balance-link" onClick={() => navigate('account')}>View balances <ArrowUpRight size={15} /></button>
         <FlowLine stages={flowStages} />
       </section>
       <div className="overview-grid">
@@ -336,19 +357,19 @@ function LiquidityPanel({ data, liquidity, onConfigure, onManualTransfer, onFund
 }
 
 function Account({ data, explainAccounting, reconcile, liquidity, onConfigureLiquidity, onManualTransfer, onFund, navigate }: { data: DashboardData; explainAccounting: () => void; reconcile: () => void; liquidity: LiquidityConfig; onConfigureLiquidity: () => void; onManualTransfer: () => void; onFund: () => void; navigate: (id: NavId) => void }) {
-  if (data.positions.length === 0) return <div className="page page-enter"><PageIntro kicker="Economic account" title={data.accountName} description="No provider positions have been created for this account yet." /><section className="panel account-empty"><WalletCards size={24} /><h2>No balances or reservations</h2><p>Connect a provider route from Capabilities. A position appears only after that account has a real or demo rail.</p></section><div className="callout"><ShieldCheck size={20} /><div><strong>This is a clean account.</strong><p>Agents, providers, and ledger entries from other economic accounts are not visible here.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div></div>
+  if (data.positions.length === 0) return <div className="page page-enter"><PageIntro kicker="Economic account" title={data.accountName} description="No balances have been created for this account yet." /><section className="panel account-empty"><WalletCards size={24} /><h2>No balances or reservations</h2><p>Connect a provider route from Capabilities. Balances appear here as connected providers begin receiving or holding funds.</p></section><div className="callout"><ShieldCheck size={20} /><div><strong>This is a clean account.</strong><p>Agents, providers, and ledger entries from other economic accounts are not visible here.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div></div>
   return (
     <div className="page page-enter">
-      <PageIntro kicker="Economic account" title="Liquidity & positions" description="Mandate routes money automatically; you configure the limits." actions={<><button className="secondary-button" onClick={reconcile}><RefreshCw size={15} /> Refresh ledger</button><button className="primary-button" onClick={onConfigureLiquidity}><Droplets size={15} /> Configure liquidity</button></>} />
+      <PageIntro kicker="Economic account" title="Balances & liquidity" description="See where your money lives and how much is available for your agents to use." actions={<><button className="secondary-button" onClick={reconcile}><RefreshCw size={15} /> Refresh ledger</button><button className="primary-button" onClick={onConfigureLiquidity}><Droplets size={15} /> Configure liquidity</button></>} />
       <LiquidityPanel data={data} liquidity={liquidity} onConfigure={onConfigureLiquidity} onManualTransfer={onManualTransfer} onFund={onFund} navigate={navigate} />
       <div className="metric-strip">
         <div><span>Estimated value</span><strong>{data.estimateUsd === '—' ? '—' : `$${data.estimateUsd}`}</strong><small>{data.estimateUsd === '—' ? 'No valuation feed configured' : `USD · ${data.valuationAt}`}</small></div>
-        <div><span>Positions</span><strong>{data.positions.length}</strong><small>Never netted across rails</small></div>
-        <div><span>Reserved positions</span><strong>{data.positions.filter(position => BigInt(position.reserved) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.reserved) > 0n) ? 'Inspect amounts below' : 'No active reservations'}</small></div>
-        <div><span>Pending positions</span><strong>{data.positions.filter(position => BigInt(position.pending) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.pending) > 0n) ? 'Inspect amounts below' : 'Nothing pending'}</small></div>
+        <div><span>Balances</span><strong>{data.positions.length}</strong><small>Never netted across rails</small></div>
+        <div><span>Reserved balances</span><strong>{data.positions.filter(position => BigInt(position.reserved) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.reserved) > 0n) ? 'Inspect amounts below' : 'No active reservations'}</small></div>
+        <div><span>Pending balances</span><strong>{data.positions.filter(position => BigInt(position.pending) > 0n).length}</strong><small>{data.positions.some(position => BigInt(position.pending) > 0n) ? 'Inspect amounts below' : 'Nothing pending'}</small></div>
       </div>
       <section className="panel positions-panel">
-        <SectionHeading eyebrow="Underlying positions" title="Where value actually lives" action={<Pill tone="positive"><Check size={12} /> Reconciled</Pill>} />
+        <SectionHeading eyebrow="Connected balances" title="Where your money lives" action={<Pill tone="positive"><Check size={12} /> Reconciled</Pill>} />
         <div className="position-list">
           {data.positions.map(position => (
             <div className="position-row" key={position.provider}>
@@ -357,12 +378,12 @@ function Account({ data, explainAccounting, reconcile, liquidity, onConfigureLiq
               <div><span>Available</span><strong>{formatAtomic(position.available, position.decimals)} {position.asset}</strong></div>
               <div><span>Reserved</span><strong>{formatAtomic(position.reserved, position.decimals)} {position.asset}</strong></div>
               <div><span>Pending</span><strong>{formatAtomic(position.pending, position.decimals)} {position.asset}</strong></div>
-              <div className="position-status"><Pill tone={position.status === 'demo' ? 'neutral' : 'info'}>{position.status === 'demo' ? 'Demo position' : position.status}</Pill><small>Updated {position.reconciledAt}</small></div>
+              <div className="position-status"><Pill tone={position.status === 'demo' ? 'neutral' : 'info'}>{position.status === 'demo' ? 'Demo balance' : position.status}</Pill><small>Updated {position.reconciledAt}</small></div>
             </div>
           ))}
         </div>
       </section>
-      <div className="callout"><ShieldCheck size={20} /><div><strong>Valuation is context, not liquidity.</strong><p>The total uses a timestamped USD estimate. Each position remains spendable only through its own provider rail.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div>
+      <div className="callout"><ShieldCheck size={20} /><div><strong>Valuation is context, not liquidity.</strong><p>The total uses a timestamped USD estimate. Each balance remains spendable only through its own provider rail.</p></div><button className="text-action" onClick={explainAccounting}>How accounting works <ArrowUpRight size={14} /></button></div>
     </div>
   )
 }
@@ -625,7 +646,7 @@ function Capabilities({ data, configure, addProvider, exploreProviders, closeLoo
         <button onClick={() => addProvider('Hold')}><span><CircleDollarSign size={18} /></span><strong>Hold and transfer</strong><small>Receive and manage USDC through Coinbase.</small><ArrowRight size={15} /></button>
         <button onClick={() => addProvider('Spend')}><span><ArrowUpRight size={18} /></span><strong>Spend with cards</strong><small>Create controlled virtual card payment sessions with Lithic.</small><ArrowRight size={15} /></button>
       </div></section>}
-      <div className={`capability-map ${connected === 0 ? 'capability-map--empty' : ''}`}><div className="cap-map-copy"><Pill tone={connected === 3 ? 'positive' : connected === 0 ? 'neutral' : 'warning'}>{connected} of 3 connected</Pill><h2>{connected === 0 ? 'Choose the first rail for this account.' : connected === 3 ? 'Receive, hold, and spend are available.' : 'This account is partially configured.'}</h2><p>{connected === 0 ? 'No provider routes are connected. Start with the capability your agents need first.' : 'Each route is account-scoped and keeps its own provider position.'}</p></div><FlowLine compact /></div>
+      <div className={`capability-map ${connected === 0 ? 'capability-map--empty' : ''}`}><div className="cap-map-copy"><Pill tone={connected === 3 ? 'positive' : connected === 0 ? 'neutral' : 'warning'}>{connected} of 3 connected</Pill><h2>{connected === 0 ? 'Choose the first rail for this account.' : connected === 3 ? 'Receive, hold, and spend are available.' : 'This account is partially configured.'}</h2><p>{connected === 0 ? 'No provider routes are connected. Start with the capability your agents need first.' : 'Each route is account-scoped and keeps its own balance.'}</p></div><FlowLine compact /></div>
       {(['Receive', 'Hold', 'Spend', 'Bridge'] as const).map(category => (
         <section className="capability-section" key={category}>
           <SectionHeading eyebrow={`${data.providers.filter(p => p.category === category).length} provider`} title={category} action={<div className="capability-heading-actions"><button className="text-action" onClick={() => exploreProviders(category)}>How {category} providers work</button><button className="icon-button" aria-label={`Add ${category} provider`} onClick={() => addProvider(category)}><Plus size={17} /></button></div>} />
@@ -770,7 +791,7 @@ const ONBOARDING_STEPS = ['Welcome', 'Account']
 
 function FirstRun({ detected, onInitialized }: { detected: { openclaw: boolean; hermes: boolean }; onInitialized: () => void; onPreview?: () => void }) {
   const [step, setStep] = useState(0)
-  const [accountName, setAccountName] = useState('Primary treasury')
+  const [accountName, setAccountName] = useState('Primary account')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submit = async () => {
@@ -782,7 +803,7 @@ function FirstRun({ detected, onInitialized }: { detected: { openclaw: boolean; 
   }
   const visuals = [
     <div className="welcome-visual"><LogoMark /><div className="continuity-word">Receive <span /> Hold <span /> Spend</div></div>,
-    <div className="onboarding-form"><label>First economic account<input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Primary treasury" /></label><div className="account-model"><strong>One principal, multiple accounts</strong><p>Each account owns its provider positions, ledger, and grants. Multiple agents can share one account without sharing administrator authority.</p></div><div className="detected-summary">OpenClaw {detected.openclaw ? 'detected' : 'not found'} · Hermes {detected.hermes ? 'detected' : 'not found'}</div></div>,
+    <div className="onboarding-form"><label>First economic account<input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Primary account" /></label><div className="account-model"><strong>One principal, multiple accounts</strong><p>Each account owns its balances, ledger, and grants. Multiple agents can share one account without sharing administrator authority.</p></div><div className="detected-summary">OpenClaw {detected.openclaw ? 'detected' : 'not found'} · Hermes {detected.hermes ? 'detected' : 'not found'}</div></div>,
   ]
   const copy = [
     ['Welcome to Mandate', 'Give your agents an economic account.', 'Set up a clean local instance from first principles. Start empty and connect each provider route from scratch.'],

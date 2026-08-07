@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         menu.addItem(makeItem("Start Daemon", action: #selector(startDaemonAction), target: self))
         menu.addItem(makeItem("Stop Daemon", action: #selector(stopDaemonAction), target: self))
         menu.addItem(makeItem("Restart Daemon", action: #selector(restartDaemonAction), target: self))
+        menu.addItem(makeItem("Restart App", action: #selector(restartApp), target: self))
         menu.addItem(makeItem("View Daemon Log", action: #selector(openDaemonLog), target: self))
         menu.addItem(NSMenuItem.separator())
 
@@ -133,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(makeItem("Open Dashboard Window", action: #selector(openDashboard), target: self, key: "o"))
         appMenu.addItem(makeItem("Open in Default Browser", action: #selector(openInBrowser), target: self, key: "b"))
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(makeItem("Restart App", action: #selector(restartApp), target: self))
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(makeItem("Hide Mandate", action: #selector(NSApplication.hide(_:)), target: NSApp, key: "h"))
         let hideOthers = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -409,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
         let a = NSAlert()
         a.messageText = "Mandate"
-        a.informativeText = "One account. Many rails.\nVersion \(v)\nLocal economic operating system."
+        a.informativeText = "One economy. Any provider.\nVersion \(v)\nLocal economic operating system."
         a.alertStyle = .informational
         a.addButton(withTitle: "OK")
         a.runModal()
@@ -418,6 +421,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     @objc func quit() {
         shutdownDaemon()
         NSApplication.shared.terminate(self)
+    }
+
+    @objc func restartApp() {
+        shutdownDaemon()
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-n", bundleURL.path]
+        do {
+            try p.run()
+            NSApplication.shared.terminate(self)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Restart Failed"
+            alert.informativeText = "Could not restart Mandate: \(error.localizedDescription)"
+            alert.runModal()
+            startDaemon()
+        }
     }
 
     // MARK: - Menu bar icon (canonical Mandate mark: three angled bars)

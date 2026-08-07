@@ -126,7 +126,7 @@ export type FlowStage = { name: string; value: string; detail: string }
 export function FlowLine({ compact = false, stages: suppliedStages }: { compact?: boolean; stages?: FlowStage[] }) {
   const stages = suppliedStages ?? [
     { name: 'Receive', value: '+$3,338', detail: 'Stripe + USDC' },
-    { name: 'Hold', value: '$18,429', detail: '3 positions' },
+    { name: 'Hold', value: '$18,429', detail: '3 connected balances' },
     { name: 'Spend', value: '$225', detail: 'Reserved today' },
   ]
   return (

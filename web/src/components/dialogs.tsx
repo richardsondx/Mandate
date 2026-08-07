@@ -97,9 +97,9 @@ export function LedgerDialog({ transaction, onClose }: { transaction: Transactio
 }
 
 export function AccountingDialog({ onClose }: { onClose: () => void }) {
-  return <Modal eyebrow="Accounting model" title="Positions stay truthful across rails" onClose={onClose} wide>
+  return <Modal eyebrow="Accounting model" title="Balances stay truthful across rails" onClose={onClose} wide>
     <div className="accounting-explainer">
-      <section><span>1</span><div><h3>Provider positions</h3><p>Coinbase USDC, Stripe revenue, and card-program funds remain separate positions. A consolidated USD number is only a timestamped estimate.</p></div></section>
+      <section><span>1</span><div><h3>Connected balances</h3><p>Coinbase USDC, Stripe revenue, and card-program funds remain separate balances. A consolidated USD number is only a timestamped estimate.</p></div></section>
       <section><span>2</span><div><h3>Reservations before spend</h3><p>A payment session moves value from an available asset account into a reserved liability account before a provider is called.</p></div></section>
       <section><span>3</span><div><h3>Balanced immutable journals</h3><p>Every accounting transaction contains at least two entries and must net to zero for its asset. Workflow status remains separate from accounting status.</p></div></section>
     </div>
@@ -229,7 +229,7 @@ export function ProviderDialog({ accountId, providers, provider, category, envir
           <div className="provider-credentials-head"><KeyRound size={16} /><strong>Connected credentials</strong><small>Sensitive values are masked; only the last digits are shown.</small></div>
           <dl>{credentials.map(field => <div key={field.key}><dt>{field.label}</dt><dd className={field.sensitive ? 'credential-redacted' : ''}>{field.value}</dd></div>)}</dl>
         </div>}
-        {confirmDisconnect ? <div className="disconnect-confirm"><div><strong>Disconnect {selected.name}?</strong><p>The route and its idle demo position will be removed. Historical ledger entries remain.</p></div><button className="secondary-button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button><button className="danger-button" onClick={disconnect} disabled={busy}>{busy ? 'Disconnecting…' : 'Confirm disconnect'}</button></div> : <button className="danger-button provider-disconnect" onClick={() => setConfirmDisconnect(true)}>Disconnect provider</button>}
+        {confirmDisconnect ? <div className="disconnect-confirm"><div><strong>Disconnect {selected.name}?</strong><p>The route and its idle demo balance will be removed. Historical ledger entries remain.</p></div><button className="secondary-button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button><button className="danger-button" onClick={disconnect} disabled={busy}>{busy ? 'Disconnecting…' : 'Confirm disconnect'}</button></div> : <button className="danger-button provider-disconnect" onClick={() => setConfirmDisconnect(true)}>Disconnect provider</button>}
       </>}
       {error && <div className="form-error" role="alert"><p>{error}</p></div>}
       {selected.status !== 'disconnected' && <footer>
@@ -252,7 +252,7 @@ export function AccountDialog({ onClose, onComplete }: { onClose: () => void; on
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Account creation failed') } finally { setBusy(false) }
   }
   return <Modal eyebrow="Economic accounts" title="Create an account" onClose={onClose}>
-    <form className="dialog-form" onSubmit={submit}><label>Account name<input value={name} onChange={event => setName(event.target.value)} placeholder="Operations treasury" required autoFocus /></label><div className="form-truth"><ShieldCheck size={16} /><p>Accounts keep balances, provider routes, ledger entries, and agent grants separate. You can connect multiple agents to one account.</p></div>{error && <p className="form-error" role="alert">{error}</p>}<footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? 'Creating…' : 'Create account'}</button></footer></form>
+    <form className="dialog-form" onSubmit={submit}><label>Account name<input value={name} onChange={event => setName(event.target.value)} placeholder="Primary account" required autoFocus /></label><div className="form-truth"><ShieldCheck size={16} /><p>Accounts keep balances, provider routes, ledger entries, and agent grants separate. You can connect multiple agents to one account.</p></div>{error && <p className="form-error" role="alert">{error}</p>}<footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? 'Creating…' : 'Create account'}</button></footer></form>
   </Modal>
 }
 
@@ -283,7 +283,7 @@ export function SandboxSimulatorDialog({ onClose, onSimulate }: { onClose: () =>
       </div>
       <div className="form-truth">
         <ShieldCheck size={16} />
-        <p><strong>Sandbox simulation only.</strong> Simulated events update only sandbox positions and sandbox ledger. Live rails and real money are untouched.</p>
+        <p><strong>Sandbox simulation only.</strong> Simulated events update only sandbox balances and sandbox ledger. Live rails and real money are untouched.</p>
       </div>
     </Modal>
   )
@@ -528,7 +528,7 @@ export function copyText(value: string) {
 
 export function CommandDialog({ onClose, navigate, newOperation }: { onClose: () => void; navigate: (page: NavId) => void; newOperation: () => void }) {
   const commands = [
-    ['Overview', 'overview'], ['Account positions', 'account'], ['Activity and ledger', 'activity'],
+    ['Overview', 'overview'], ['Account balances', 'account'], ['Activity and ledger', 'activity'],
     ['Agent grants', 'agents'], ['Provider capabilities', 'capabilities'], ['Close the loop guide', 'guide'], ['System diagnostics', 'system'],
   ] as const
   return <Modal eyebrow="Command menu" title="Go somewhere or test an operation" onClose={onClose}>

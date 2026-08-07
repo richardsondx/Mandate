@@ -15,8 +15,8 @@ const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.
 const snapshot = {
   csrf_token: 'csrf_test',
   snapshot: {
-    accounts: [{ id: 'acct_1', name: 'Primary treasury' }],
-    account: { id: 'acct_1', name: 'Primary treasury' },
+    accounts: [{ id: 'acct_1', name: 'Primary account' }],
+    account: { id: 'acct_1', name: 'Primary account' },
     balance: { positions: [], estimated_usd_atomic: null, estimated_at: '2026-08-06T12:00:00Z' },
     transactions: { data: [] },
     agents: [],
@@ -55,7 +55,7 @@ describe('Mandate dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Give your agents an economic account.' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /continue/i }))
     expect(await screen.findByRole('heading', { name: 'Name the first economic account.' })).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('Primary treasury')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Primary account')).toBeInTheDocument()
   })
 
   it('loads the dashboard on a direct visit without a sign-in gate', async () => {
@@ -69,7 +69,7 @@ describe('Mandate dashboard', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'Set up Primary treasury.' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Set up Primary account.' })).toBeInTheDocument()
   })
 
   it('shows a clean account and category-specific provider setup', async () => {
@@ -81,7 +81,7 @@ describe('Mandate dashboard', () => {
       return json(snapshot)
     }))
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Set up Primary treasury.' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Set up Primary account.' })).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'Capabilities' })[0])
     expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()
     expect(screen.getByText('0 of 3 connected')).toBeInTheDocument()
@@ -127,7 +127,7 @@ describe('Mandate dashboard', () => {
     }))
 
     render(<App />)
-    await screen.findByText('Primary treasury')
+    await screen.findByText('Primary account')
     fireEvent.click(screen.getAllByRole('button', { name: 'Agent Access' })[0])
     fireEvent.click(await screen.findByRole('button', { name: 'Manage access for Revenue Agent' }))
 
@@ -145,7 +145,7 @@ describe('Mandate dashboard', () => {
       return json(snapshot)
     }))
     render(<App />)
-    await screen.findByRole('heading', { name: 'Set up Primary treasury.' })
+    await screen.findByRole('heading', { name: 'Set up Primary account.' })
     fireEvent.click(screen.getAllByRole('button', { name: 'System' })[0])
     expect(await screen.findByRole('heading', { name: 'System' })).toBeInTheDocument()
     // The calm page reads healthy without surfacing engineering detail as pending work.
@@ -167,7 +167,7 @@ describe('Mandate dashboard', () => {
       return json(snapshot)
     }))
     render(<App />)
-    await screen.findByRole('heading', { name: 'Set up Primary treasury.' })
+    await screen.findByRole('heading', { name: 'Set up Primary account.' })
 
     // Check environment selector is present and defaults to Sandbox
     const envBtn = screen.getByRole('button', { name: /Sandbox/i })
@@ -219,10 +219,10 @@ describe('Mandate dashboard', () => {
       return json(richSnapshot)
     }))
     render(<App />)
-    await screen.findByText('Primary treasury')
+    await screen.findByText('Primary account')
 
     // Initial estimated value is $1,000.00
-    expect(screen.getByText('1,000.00')).toBeInTheDocument()
+    expect(screen.getByText(/\$1,000\.00/)).toBeInTheDocument()
 
     // Open the sandbox simulator and trigger a customer checkout (revenue in)
     fireEvent.click(screen.getByRole('button', { name: /Simulate sandbox event/i }))
@@ -233,7 +233,7 @@ describe('Mandate dashboard', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Simulated event: Pay test customer')
 
     // Estimated value increased by the $49.00 settlement
-    expect(screen.getByText('1,049.00')).toBeInTheDocument()
+    expect(screen.getByText(/\$1,049\.00/)).toBeInTheDocument()
 
     // The simulated settlement appears immediately in the Live stream.
     fireEvent.click(screen.getAllByRole('button', { name: 'Activity' })[0])
@@ -253,7 +253,7 @@ describe('Mandate dashboard', () => {
     fireEvent.click(screen.getByText('Card declined'))
     expect(await screen.findByRole('status')).toHaveTextContent('Simulated event: Card declined')
     // Estimate unchanged by the $0.00 decline
-    expect(screen.getByText('1,049.00')).toBeInTheDocument()
+    expect(screen.getByText(/\$1,049\.00/)).toBeInTheDocument()
   })
 
   it('opens a prompt-first Guide with playbook, reference, copy flow, and honest setup', async () => {
@@ -265,7 +265,7 @@ describe('Mandate dashboard', () => {
       return json(snapshot)
     }))
     render(<App />)
-    await screen.findByRole('heading', { name: 'Set up Primary treasury.' })
+    await screen.findByRole('heading', { name: 'Set up Primary account.' })
 
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
 
@@ -330,7 +330,7 @@ describe('Mandate dashboard', () => {
       })
     }))
     render(<App />)
-    await screen.findByText('Primary treasury')
+    await screen.findByText('Primary account')
 
     // Go to Capabilities
 
@@ -359,7 +359,7 @@ describe('Mandate dashboard', () => {
       return json(snapshot)
     }))
     render(<App />)
-    await screen.findByText('Primary treasury')
+    await screen.findByText('Primary account')
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Capabilities' })[0])
     expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()

@@ -724,7 +724,7 @@ const Comparison = () => {
         <span><CreditCard size={16} /> Lithic</span>
         <i />
         <span><Route size={16} /> Bridge</span>
-        <b>One account. Many rails.</b>
+        <b>One economy. Any provider.</b>
       </div>
     </AbsoluteFill>
   );
