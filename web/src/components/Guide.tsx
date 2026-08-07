@@ -84,7 +84,7 @@ const PROVIDER_TYPES: { category: ProviderGuideType; label: string; icon: typeof
   { category: 'Receive', label: 'Receive', icon: CreditCard, tagline: 'Bring earned value into Mandate.', examples: 'Stripe, PayPal, marketplaces, wallets…' },
   { category: 'Hold', label: 'Hold', icon: Wallet, tagline: 'Store reusable operating capital.', examples: 'Wallets, bank accounts, financial accounts…' },
   { category: 'Spend', label: 'Spend', icon: Zap, tagline: 'Give agents purchasing power.', examples: 'Cards, bank transfers, onchain payments…' },
-  { category: 'Bridge', label: 'Money routes', icon: Route, tagline: 'Connect otherwise isolated positions.', examples: 'Bridge, ACH, conversions, provider settlement…' },
+  { category: 'Bridge', label: 'Money routes', icon: Route, tagline: 'Connect otherwise isolated balances.', examples: 'Bridge, ACH, conversions, provider settlement…' },
 ]
 
 const PROVIDER_SPECS: Record<string, { fitsIntoMandate: string; whatFor: string; typicalFlow: string; inMandate: string[]; outsideMandate: string[]; commonSetups: string[] }> = {
@@ -114,7 +114,7 @@ const PROVIDER_SPECS: Record<string, { fitsIntoMandate: string; whatFor: string;
   },
   'bridge-rail': {
     fitsIntoMandate: 'Money route',
-    whatFor: 'Move between fiat and stablecoin so isolated positions connect.',
+    whatFor: 'Move between fiat and stablecoin so isolated balances connect.',
     typicalFlow: 'Fiat → Bridge → Stablecoin',
     inMandate: ['Virtual account routing', 'Liquidation addresses', 'Conversion quotes'],
     outsideMandate: ['Bridge account & API keys', 'Compliance / KYC status'],
@@ -202,9 +202,9 @@ export function getAccountTopology(data: DashboardData): AccountTopology {
       summary: receiveConnected
         ? 'Revenue can arrive, but no connected treasury is available to hold operating capital.'
         : 'Connect a Receive provider and a Hold provider before configuring settlement.',
-      inMandateCapabilities: ['Checkout, invoice, and receive intents', 'Provider-scoped positions', 'Normalized ledger activity'],
+      inMandateCapabilities: ['Checkout, invoice, and receive intents', 'Provider-scoped balances', 'Normalized ledger activity'],
       externalSteps: ['Connect the missing provider.', 'Configure its payout or deposit destination directly with the provider.', 'Wait for daemon reconciliation to report the route.'],
-      routeCaveat: 'A provider connection does not prove that value can settle into the next position.',
+      routeCaveat: 'A provider connection does not prove that value can settle into the next balance.',
       actionLabel: 'Configure providers',
       status: 'pending',
     })
@@ -215,9 +215,9 @@ export function getAccountTopology(data: DashboardData): AccountTopology {
       title: `${receiveProvider.name} → ${holdProvider.name}`,
       sourceProvider: receiveProvider.name,
       targetProvider: holdProvider.name,
-      summary: 'Configure settlement from the revenue position into operating treasury.',
-      inMandateCapabilities: ['Customer payment operations', 'Provider positions', 'Ledger reconciliation'],
-      externalSteps: ['Configure the payout destination with the Receive provider.', 'Use a supported bank or Bridge route when the positions cannot connect directly.', 'Wait for reconciliation evidence before relying on the route.'],
+      summary: 'Configure settlement from the revenue balance into operating treasury.',
+      inMandateCapabilities: ['Customer payment operations', 'Provider balances', 'Ledger reconciliation'],
+      externalSteps: ['Configure the payout destination with the Receive provider.', 'Use a supported bank or Bridge route when the balances cannot connect directly.', 'Wait for reconciliation evidence before relying on the route.'],
       routeCaveat: 'Mandate does not mark this route ready from a button click. Readiness requires provider or daemon evidence.',
       actionLabel: 'Review provider setup',
       status: routeReady ? 'completed' : 'attention',
@@ -232,7 +232,7 @@ export function getAccountTopology(data: DashboardData): AccountTopology {
       sourceProvider: holdProvider?.name ?? 'Hold provider',
       targetProvider: spendProvider?.name ?? 'Spend provider',
       summary: spendConnected
-        ? 'The Spend provider is connected, but no treasury position is available to back it.'
+        ? 'The Spend provider is connected, but no treasury balance is available to back it.'
         : 'Connect a Spend provider and define how it is funded.',
       inMandateCapabilities: ['Balance checks', 'Controlled payment sessions', 'Reservations and audit trail'],
       externalSteps: ['Connect the missing provider.', 'Configure the card-program or transfer funding source.', 'Test in sandbox before using live money.'],

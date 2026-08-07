@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[command(
     name = "mandate",
     version,
-    about = "One account. Many rails.",
+    about = "One economy. Any provider.",
     arg_required_else_help = true
 )]
 struct Cli {
@@ -211,7 +211,7 @@ struct AgentArgs {
     #[arg(
         long,
         value_delimiter = ',',
-        default_value = "balance,receive,invoice,checkout,pay,transfer,transactions,refund"
+        default_value = "balance,receive,invoice,checkout,pay,transactions,refund,fund_spend"
     )]
     capabilities: Vec<String>,
 }
@@ -649,15 +649,19 @@ async fn connect(a: &Api, runtime: &str, account: &str, with_mcp: bool) -> Resul
         name: runtime.into(),
         account: account.into(),
         authority: "independent".into(),
+        // `transfer` (arbitrary external capital movement) is intentionally not part
+        // of the default grant. Operators must explicitly opt in to external
+        // transfer; `fund_spend` is the autonomous internal money-movement
+        // primitive granted by default.
         capabilities: vec![
             "balance",
             "receive",
             "invoice",
             "checkout",
             "pay",
-            "transfer",
             "transactions",
             "refund",
+            "fund_spend",
         ]
         .into_iter()
         .map(|s| s.to_string())
