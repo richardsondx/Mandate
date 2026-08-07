@@ -710,7 +710,9 @@ async fn dashboard(
         openclaw: runtime_detected("openclaw"),
         hermes: runtime_detected("hermes"),
     };
-    let snapshot = s.service.dashboard_snapshot(query.account_id.as_deref(), detection)?;
+    let snapshot = s
+        .service
+        .dashboard_snapshot(query.account_id.as_deref(), detection)?;
     // Auto-provision a dashboard session for direct browser visits so the
     // sign-in gate is no longer required for local access.
     let (csrf, set_cookie) = match auth(&s, &headers, true, None, None, false) {
