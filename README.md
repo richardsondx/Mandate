@@ -84,6 +84,16 @@ An allowance eventually runs out. An economy can sustain itself.
       <img src="docs/assets/capability-reference.png" alt="Capability Reference — Standardized interface for human-intent verification" width="100%">
     </td>
   </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>Capabilities — Rail Configuration</strong><br/>
+      <img src="docs/assets/capabilities-page.png" alt="Capabilities — Compact rail-based provider management with status bar" width="100%">
+    </td>
+    <td width="50%" align="center">
+      <strong>Agent Access — Connect Agent</strong><br/>
+      <img src="docs/assets/connect-agent-dialog.png" alt="Connect Agent — Per-capability access presets with Off / Auto / Approve controls" width="100%">
+    </td>
+  </tr>
 </table>
 
 *The Mandate dashboard provides full economic visibility: a consolidated overview, granular account and liquidity route statuses, normalized ledger activity logs, and a standard capability reference guide.*

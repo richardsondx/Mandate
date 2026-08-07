@@ -604,71 +604,123 @@ function Agents({ data, connect, manage, testConnection }: { data: DashboardData
   )
 }
 
-function ProviderCard({ provider, configure }: { provider: Provider; configure: (provider: Provider) => void }) {
+function ProviderRow({ provider, configure }: { provider: Provider; configure: (provider: Provider) => void }) {
   const isConnected = provider.status !== 'disconnected'
   const tone = provider.status === 'degraded' ? 'warning' : isConnected ? 'positive' : 'danger'
   const statusLabel = provider.status === 'degraded' ? 'Degraded' : isConnected ? 'Connected' : 'Not connected'
   return (
-    <article className="provider-card">
-      <div className="provider-head"><ProviderLogo provider={provider.id} label={provider.name} /><Pill tone={tone}>{statusLabel}</Pill></div>
-      <h3>{provider.name}</h3><p>{provider.description}</p>
-      <div className="provider-tags">{provider.capabilities.map(capability => <span key={capability}>{capability}</span>)}</div>
-      <footer><span className={provider.status === 'disconnected' ? 'provider-disconnected' : ''}><i />{provider.detail}</span><button onClick={() => configure(provider)}>{provider.status === 'disconnected' ? 'Set up' : 'Manage'} <ArrowUpRight size={13} /></button></footer>
-    </article>
+    <div className="provider-row">
+      <ProviderLogo provider={provider.id} label={provider.name} />
+      <div className="provider-row-body">
+        <div className="provider-row-head">
+          <strong>{provider.name}</strong>
+          <Pill tone={tone}>{statusLabel}</Pill>
+        </div>
+        <p>{provider.description}</p>
+        <div className="provider-tags">{provider.capabilities.map(capability => <span key={capability}>{capability}</span>)}</div>
+      </div>
+      <div className="provider-row-meta">
+        <span className={`provider-status-detail ${provider.status === 'disconnected' ? 'provider-disconnected' : ''}`}>
+          <i />{provider.detail}
+        </span>
+        <button className="text-action" onClick={() => configure(provider)}>{provider.status === 'disconnected' ? 'Set up' : 'Manage'} <ArrowUpRight size={13} /></button>
+      </div>
+    </div>
+  )
+}
+
+/** @deprecated Use ProviderRow. Kept for backwards compatibility. */
+function ProviderCard({ provider, configure }: { provider: Provider; configure: (provider: Provider) => void }) {
+  return <ProviderRow provider={provider} configure={configure} />
+}
+
+function CapabilityRail({ category, providers, addProvider, exploreProviders, configure }: { category: ProviderCategory; providers: Provider[]; addProvider: (category: ProviderCategory) => void; exploreProviders: (category: ProviderCategory) => void; configure: (provider: Provider) => void }) {
+  const connected = providers.filter(p => p.status !== 'disconnected').length
+  const railTone = connected > 0 ? 'positive' : 'neutral'
+  return (
+    <section className="capability-rail">
+      <div className="capability-rail-header">
+        <div className="capability-rail-title">
+          <span className={`rail-dot rail-dot--${railTone}`} />
+          <strong>{category}</strong>
+          <span className="rail-count">{providers.length} provider{providers.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div className="capability-heading-actions">
+          <button className="text-action" onClick={() => exploreProviders(category)}>How {category} providers work</button>
+          <button className="icon-button" aria-label={`Add ${category} provider`} onClick={() => addProvider(category)}><Plus size={17} /></button>
+        </div>
+      </div>
+      {providers.length > 0
+        ? <div className="capability-rail-providers">{providers.map(provider => <ProviderRow key={provider.id} provider={provider} configure={configure} />)}</div>
+        : <div className="capability-rail-empty"><button className="capability-empty-add" onClick={() => addProvider(category)}><Plus size={15} />Add {category.toLowerCase()} provider</button></div>
+      }
+    </section>
   )
 }
 
 function Capabilities({ data, configure, addProvider, exploreProviders, closeLoop }: { data: DashboardData; configure: (provider: Provider) => void; addProvider: (category?: ProviderCategory) => void; exploreProviders: (category?: ProviderCategory) => void; closeLoop: () => void }) {
   const connected = data.providers.filter(provider => provider.category !== 'Bridge' && provider.status !== 'disconnected').length
   const topology = getAccountTopology(data)
+  const RAILS: ProviderCategory[] = ['Receive', 'Hold', 'Spend', 'Bridge']
   return (
     <div className="page page-enter">
       <PageIntro kicker="Interchangeable rails" title="Capabilities" description="Choose what agents can do first. Providers are the replaceable implementation." actions={<div className="page-actions-group"><button className="text-action" onClick={() => exploreProviders()}>Explore provider types <ArrowRight size={14} /></button><button className="secondary-button" onClick={() => addProvider()}><Plus size={15} /> Add provider</button></div>} />
 
-      {connected > 0 && !topology.isClosed && (
-        <section className="loop-unclosed-banner">
-          <div className="banner-icon-wrap">
-            <Compass size={22} />
-          </div>
-          <div className="banner-copy">
-            <span className="banner-tag">Route setup needed</span>
-            <h3>Your capabilities are connected, but your money can't flow between all of them yet.</h3>
-            <p>{topology.missingRoutesCount} {topology.missingRoutesCount === 1 ? 'route needs' : 'routes need'} setup for a closed economic loop.</p>
-          </div>
-          <button className="primary-button" onClick={() => closeLoop()}>
-            Close the loop <ArrowRight size={14} />
-          </button>
-        </section>
-      )}
+      <div className="rail-status-bar">
+        {(['Receive', 'Hold', 'Spend'] as const).map(category => {
+          const hasProvider = data.providers.some(p => p.category === category && p.status !== 'disconnected')
+          return (
+            <div key={category} className={`rail-status-step ${hasProvider ? 'rail-status-step--on' : 'rail-status-step--off'}`}>
+              <span className="rail-status-dot" />
+              <span>{category}</span>
+            </div>
+          )
+        })}
+        <div className="rail-status-divider" />
+        <span className={`rail-status-summary pill pill--${connected === 3 ? 'positive' : connected === 0 ? 'neutral' : 'warning'}`}>
+          {connected} of 3 rails active
+        </span>
+        {topology.isClosed && <span className="rail-status-closed"><Check size={11} />Loop closed</span>}
+      </div>
 
       {connected === 0 && <section className="capability-onboarding"><div><p className="eyebrow">Account setup · choose a starting point</p><h2>What should this account do first?</h2><p>Connect only the rails this account needs. You can add the others later without changing the account or its agent grants.</p></div><div className="capability-start-grid">
         <button onClick={() => addProvider('Receive')}><span><ArrowDownLeft size={18} /></span><strong>Receive revenue</strong><small>Create checkouts, invoices, and refunds with Stripe.</small><ArrowRight size={15} /></button>
         <button onClick={() => addProvider('Hold')}><span><CircleDollarSign size={18} /></span><strong>Hold and transfer</strong><small>Receive and manage USDC through Coinbase.</small><ArrowRight size={15} /></button>
         <button onClick={() => addProvider('Spend')}><span><ArrowUpRight size={18} /></span><strong>Spend with cards</strong><small>Create controlled virtual card payment sessions with Lithic.</small><ArrowRight size={15} /></button>
       </div></section>}
-      <div className={`capability-map ${connected === 0 ? 'capability-map--empty' : ''}`}><div className="cap-map-copy"><Pill tone={connected === 3 ? 'positive' : connected === 0 ? 'neutral' : 'warning'}>{connected} of 3 connected</Pill><h2>{connected === 0 ? 'Choose the first rail for this account.' : connected === 3 ? 'Receive, hold, and spend are available.' : 'This account is partially configured.'}</h2><p>{connected === 0 ? 'No provider routes are connected. Start with the capability your agents need first.' : 'Each route is account-scoped and keeps its own balance.'}</p></div><FlowLine compact /></div>
-      {(['Receive', 'Hold', 'Spend', 'Bridge'] as const).map(category => (
-        <section className="capability-section" key={category}>
-          <SectionHeading eyebrow={`${data.providers.filter(p => p.category === category).length} provider`} title={category} action={<div className="capability-heading-actions"><button className="text-action" onClick={() => exploreProviders(category)}>How {category} providers work</button><button className="icon-button" aria-label={`Add ${category} provider`} onClick={() => addProvider(category)}><Plus size={17} /></button></div>} />
-          <div className="provider-grid">{data.providers.filter(p => p.category === category).map(provider => <ProviderCard key={provider.id} provider={provider} configure={configure} />)}</div>
-        </section>
-      ))}
-      <div className="callout callout--warning">
-        <ShieldCheck size={20} />
-        <div>
-          <strong>{topology.isClosed ? 'Your economic loop is closed.' : 'Your economic loop needs external setup.'}</strong>
-          <p>
-            {topology.isClosed
-              ? 'The daemon reports the required providers and route evidence for this account.'
-              : 'Stripe revenue and Coinbase treasury do not automatically fund Lithic without a configured settlement rail.'}
-          </p>
-        </div>
-        {!topology.isClosed && (
-          <button className="secondary-button" onClick={() => closeLoop()}>
-            Close the loop <ArrowRight size={13} />
-          </button>
-        )}
+
+      <div className="capability-rails-panel panel">
+        {RAILS.map((category) => (
+          <CapabilityRail
+            key={category}
+            category={category}
+            providers={data.providers.filter(p => p.category === category)}
+            addProvider={cat => addProvider(cat)}
+            exploreProviders={cat => exploreProviders(cat)}
+            configure={configure}
+          />
+        ))}
       </div>
+
+      {connected > 0 && !topology.isClosed && (
+        <div className="callout callout--warning">
+          <ShieldCheck size={20} />
+          <div>
+            <strong>Your economic loop needs external setup.</strong>
+            <p>Stripe revenue and Coinbase treasury do not automatically fund Lithic without a configured settlement rail. {topology.missingRoutesCount} {topology.missingRoutesCount === 1 ? 'route needs' : 'routes need'} setup for a closed loop.</p>
+          </div>
+          <button className="secondary-button" onClick={() => closeLoop()}>Close the loop <ArrowRight size={13} /></button>
+        </div>
+      )}
+      {topology.isClosed && (
+        <div className="callout">
+          <ShieldCheck size={20} />
+          <div>
+            <strong>Your economic loop is closed.</strong>
+            <p>The daemon reports the required providers and route evidence for this account.</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
