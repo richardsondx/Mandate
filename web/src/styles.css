@@ -1913,7 +1913,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .capability-reference-list { display: grid; gap: 7px; }
 .capability-reference-list > button { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: inherit; text-align: left; cursor: pointer; }
 .capability-reference-list > button:hover { border-color: var(--green); }
-.capability-reference-list > button > span:first-child { display: grid; grid-template-columns: 100px minmax(150px, .5fr) 1fr; align-items: center; gap: 14px; }
+.capability-reference-list > button > span:first-child { display: grid; grid-template-columns: 155px 250px 1fr; align-items: center; gap: 16px; }
 .capability-reference-list small { color: var(--muted); }
 .capability-detail { display: grid; gap: 24px; }
 .capability-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 4px 8px 22px; border-bottom: 1px solid var(--line); }
@@ -1945,7 +1945,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .intent-card-grid { grid-template-columns: 1fr; }
   .playground-steps { grid-template-columns: 1fr 1fr; }
   .capability-facts { grid-template-columns: 1fr 1fr; }
-  .capability-reference-list > button > span:first-child { grid-template-columns: 85px 1fr; }
+  .capability-reference-list > button > span:first-child { grid-template-columns: 140px 1fr; }
   .capability-reference-list small { grid-column: 1 / -1; }
 }
 

@@ -766,34 +766,31 @@ function System({ data, source, notify, refresh, navigate }: { data: DashboardDa
   )
 }
 
-const ONBOARDING_STEPS = ['Welcome', 'Account', 'Starting point']
+const ONBOARDING_STEPS = ['Welcome', 'Account']
 
-function FirstRun({ detected, onInitialized, onPreview }: { detected: { openclaw: boolean; hermes: boolean }; onInitialized: () => void; onPreview: () => void }) {
+function FirstRun({ detected, onInitialized }: { detected: { openclaw: boolean; hermes: boolean }; onInitialized: () => void; onPreview?: () => void }) {
   const [step, setStep] = useState(0)
   const [accountName, setAccountName] = useState('Primary treasury')
-  const [demo, setDemo] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submit = async () => {
     setBusy(true); setError('')
     try {
-      await initializeInstance({ account_name: accountName, demo })
+      await initializeInstance({ account_name: accountName, demo: false })
       onInitialized()
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Setup failed') } finally { setBusy(false) }
   }
   const visuals = [
     <div className="welcome-visual"><LogoMark /><div className="continuity-word">Receive <span /> Hold <span /> Spend</div></div>,
-    <div className="onboarding-form"><label>First economic account<input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Primary treasury" /></label><div className="account-model"><strong>One principal, multiple accounts</strong><p>Each account owns its provider positions, ledger, and grants. Multiple agents can share one account without sharing administrator authority.</p></div></div>,
-    <div className="starting-options"><button className={!demo ? 'selected' : ''} onClick={() => setDemo(false)}><span><WalletCards size={18} /></span><div><strong>Start empty</strong><small>Connect each route yourself. Best for learning the real setup flow.</small></div>{!demo && <Check size={16} />}</button><button className={demo ? 'selected' : ''} onClick={() => setDemo(true)}><span><Sparkles size={18} /></span><div><strong>Add demo routes</strong><small>Seed local Coinbase, Stripe, and Lithic test routes and funds.</small></div>{demo && <Check size={16} />}</button><div className="detected-summary">OpenClaw {detected.openclaw ? 'detected' : 'not found'} · Hermes {detected.hermes ? 'detected' : 'not found'}</div></div>,
+    <div className="onboarding-form"><label>First economic account<input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="Primary treasury" /></label><div className="account-model"><strong>One principal, multiple accounts</strong><p>Each account owns its provider positions, ledger, and grants. Multiple agents can share one account without sharing administrator authority.</p></div><div className="detected-summary">OpenClaw {detected.openclaw ? 'detected' : 'not found'} · Hermes {detected.hermes ? 'detected' : 'not found'}</div></div>,
   ]
   const copy = [
-    ['Welcome to Mandate', 'Give your agents an economic account.', 'Set up a clean local instance from first principles. Demo data is optional and never mixed with your real account state.'],
-    ['Account boundary', 'Name the first economic account.', 'Use separate accounts when agents, providers, authority, or accounting histories should remain isolated.'],
-    ['Initial state', 'Start clean or add an explicit demo.', 'A clean account contains no providers, funds, agents, or activity. Demo routes can be connected later at any time.'],
+    ['Welcome to Mandate', 'Give your agents an economic account.', 'Set up a clean local instance from first principles. Start empty and connect each provider route from scratch.'],
+    ['Account boundary', 'Name the first economic account.', 'Your account starts completely empty. Connect provider credentials, grant agents access, and run operations.'],
   ]
   const [eyebrow, title, body] = copy[step]
-  const canContinue = step !== 1 || accountName.trim()
-  return <div className="onboarding"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="neutral">First-time setup</Pill></header><main><div className="onboarding-progress" aria-label={`Setup step ${step + 1} of ${ONBOARDING_STEPS.length}`}>{ONBOARDING_STEPS.map((name, index) => <div key={name} className={index <= step ? 'complete' : ''}><span>{index < step ? <Check size={11} /> : index + 1}</span><small>{name}</small></div>)}</div><section className="onboarding-card page-enter" key={step}><div className="onboarding-copy"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{body}</p>{step === 0 && <div className="local-note"><ShieldCheck size={16} /><span><strong>Local-first.</strong> Your encrypted ledger and agent policy remain on this Mac.</span></div>}</div><div className="onboarding-visual">{visuals[step]}</div></section>{error && <p className="form-error onboarding-error" role="alert">{error}</p>}<footer><button className="secondary-button" onClick={() => step === 0 ? onPreview() : setStep(step - 1)}>{step === 0 ? 'View demo first' : 'Back'}</button><span>Step {step + 1} of {ONBOARDING_STEPS.length}</span><button className="primary-button" disabled={!canContinue || busy} onClick={() => step === ONBOARDING_STEPS.length - 1 ? submit() : setStep(step + 1)}>{busy ? 'Creating…' : step === ONBOARDING_STEPS.length - 1 ? 'Create Mandate' : 'Continue'} <ArrowRight size={15} /></button></footer></main></div>
+  const canContinue = step !== 1 || Boolean(accountName.trim())
+  return <div className="onboarding"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="neutral">First-time setup</Pill></header><main><div className="onboarding-progress" aria-label={`Setup step ${step + 1} of ${ONBOARDING_STEPS.length}`}>{ONBOARDING_STEPS.map((name, index) => <div key={name} className={index <= step ? 'complete' : ''}><span>{index < step ? <Check size={11} /> : index + 1}</span><small>{name}</small></div>)}</div><section className="onboarding-card page-enter" key={step}><div className="onboarding-copy"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{body}</p>{step === 0 && <div className="local-note"><ShieldCheck size={16} /><span><strong>Local-first.</strong> Your encrypted ledger and agent policy remain on this Mac.</span></div>}</div><div className="onboarding-visual">{visuals[step]}</div></section>{error && <p className="form-error onboarding-error" role="alert">{error}</p>}<footer>{step > 0 ? <button className="secondary-button" onClick={() => setStep(step - 1)}>Back</button> : <span />}<span>Step {step + 1} of {ONBOARDING_STEPS.length}</span><button className="primary-button" disabled={!canContinue || busy} onClick={() => step === ONBOARDING_STEPS.length - 1 ? submit() : setStep(step + 1)}>{busy ? 'Creating…' : step === ONBOARDING_STEPS.length - 1 ? 'Create Mandate' : 'Continue'} <ArrowRight size={15} /></button></footer></main></div>
 }
 
 function CopyCommand({ command }: { command: string }) {

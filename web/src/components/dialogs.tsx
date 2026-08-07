@@ -169,17 +169,9 @@ export function ProviderDialog({ accountId, providers, provider, category, envir
     const config = selected.id === 'stripe-revenue' ? { secretKey } : selected.id === 'lithic-card' ? { apiKey: secretKey, accountToken, baseUrl: targetMode === 'sandbox' ? 'https://sandbox.lithic.com' : 'https://api.lithic.com' } : selected.id === 'bridge-rail' ? { apiKey: secretKey, baseUrl: 'https://api.bridge.xyz' } : { apiKeyId, apiKeySecret: apiKeySecret || secretKey, bearerToken: secretKey || apiKeySecret, walletAuth, accountAddress, network: walletNetwork, baseUrl: 'https://api.cdp.coinbase.com/platform' }
     try {
       await daemonRequest('/v1/admin/provider-connections', { method: 'POST', body: JSON.stringify({ account_id: accountId, provider_id: selected.id, mode: targetMode, config }) })
-      onComplete(`${selected.name} ${targetMode} credentials verified`)
+      onComplete(`${selected.name} ${targetMode === 'live' ? 'Live' : 'Sandbox'} credentials verified`)
       onClose()
     } catch (reason) {
-      if (targetMode === 'sandbox') {
-        try {
-          await daemonRequest('/v1/admin/provider-connections', { method: 'POST', body: JSON.stringify({ account_id: accountId, provider_id: selected.id, mode: 'demo', config }) })
-          onComplete(`${selected.name} Sandbox route connected`)
-          onClose()
-          return
-        } catch { /* proceed to error */ }
-      }
       setError(reason instanceof Error ? reason.message : 'Provider verification failed')
     } finally { setBusy(false) }
   }
