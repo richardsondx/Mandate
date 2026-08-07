@@ -19,24 +19,46 @@
       "display_name": "Stripe Revenue",
       "category": "Receive",
       "description": "Customer checkout, invoice, settlement, and refund workflows.",
-      "agent_capabilities": ["checkout", "invoice", "refund"],
-      "protocol_capabilities": ["revenue.checkout", "revenue.invoice", "revenue.refund"]
+      "agent_capabilities": [
+        "checkout",
+        "invoice",
+        "refund"
+      ],
+      "protocol_capabilities": [
+        "revenue.checkout",
+        "revenue.invoice",
+        "revenue.refund"
+      ]
     },
     {
       "id": "coinbase-cdp-wallet",
       "display_name": "Coinbase CDP Wallet",
       "category": "Hold",
       "description": "USDC treasury on Base with provider-managed signing.",
-      "agent_capabilities": ["balance", "receive", "transfer", "transactions"],
-      "protocol_capabilities": ["treasury.balance", "treasury.receive", "treasury.transfer"]
+      "agent_capabilities": [
+        "balance",
+        "receive",
+        "transfer",
+        "transactions"
+      ],
+      "protocol_capabilities": [
+        "treasury.balance",
+        "treasury.receive",
+        "treasury.transfer"
+      ]
     },
     {
       "id": "lithic-card",
       "display_name": "Lithic Cards",
       "category": "Spend",
       "description": "Single-use and merchant-locked virtual card sessions.",
-      "agent_capabilities": ["pay"],
-      "protocol_capabilities": ["spending.card", "spending.card.revoke"]
+      "agent_capabilities": [
+        "pay"
+      ],
+      "protocol_capabilities": [
+        "spending.card",
+        "spending.card.revoke"
+      ]
     },
     {
       "id": "bridge-rail",
@@ -44,7 +66,10 @@
       "category": "Bridge",
       "description": "Virtual accounts and liquidation addresses for fiat/stablecoin routes.",
       "agent_capabilities": [],
-      "protocol_capabilities": ["money.fiat_to_stablecoin", "money.stablecoin_to_fiat"]
+      "protocol_capabilities": [
+        "money.fiat_to_stablecoin",
+        "money.stablecoin_to_fiat"
+      ]
     }
   ],
   "capabilities": [
@@ -62,15 +87,29 @@
       ],
       "use_when": "Money should come from another party into this economic account through a hosted checkout.",
       "do_not_use_when": "The account is paying a merchant; use pay instead.",
-      "requires_provider_categories": ["Receive"],
-      "requires_provider_capabilities": ["revenue.checkout"],
+      "requires_provider_categories": [
+        "Receive"
+      ],
+      "requires_provider_capabilities": [
+        "revenue.checkout"
+      ],
       "side_effect": "Creates an external customer payment session.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent recognizes collection intent", "Mandate checks checkout access", "Receive provider is selected", "Customer checkout is created"],
-      "tools": ["create_checkout"]
+      "flow": [
+        "Agent recognizes collection intent",
+        "Mandate checks checkout access",
+        "Receive provider is selected",
+        "Customer checkout is created"
+      ],
+      "tools": [
+        "create_checkout"
+      ]
     },
     {
       "id": "invoice",
@@ -86,15 +125,29 @@
       ],
       "use_when": "A named customer should receive a formal invoice and payment terms.",
       "do_not_use_when": "A simple immediate payment link is enough; use checkout instead.",
-      "requires_provider_categories": ["Receive"],
-      "requires_provider_capabilities": ["revenue.invoice"],
+      "requires_provider_categories": [
+        "Receive"
+      ],
+      "requires_provider_capabilities": [
+        "revenue.invoice"
+      ],
       "side_effect": "Creates and finalizes an external invoice.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies invoice intent", "Mandate checks invoice access", "Receive provider is selected", "Customer invoice is finalized"],
-      "tools": ["create_invoice"]
+      "flow": [
+        "Agent identifies invoice intent",
+        "Mandate checks invoice access",
+        "Receive provider is selected",
+        "Customer invoice is finalized"
+      ],
+      "tools": [
+        "create_invoice"
+      ]
     },
     {
       "id": "receive",
@@ -110,15 +163,29 @@
       ],
       "use_when": "Another party needs an address or account endpoint to transfer value directly.",
       "do_not_use_when": "The payer needs a hosted checkout or invoice.",
-      "requires_provider_categories": ["Hold"],
-      "requires_provider_capabilities": ["treasury.receive"],
+      "requires_provider_categories": [
+        "Hold"
+      ],
+      "requires_provider_capabilities": [
+        "treasury.receive"
+      ],
       "side_effect": "Creates or returns an external receive endpoint.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies direct transfer intent", "Mandate checks receive access", "Treasury provider is selected", "Receive endpoint is returned"],
-      "tools": ["create_receive_endpoint"]
+      "flow": [
+        "Agent identifies direct transfer intent",
+        "Mandate checks receive access",
+        "Treasury provider is selected",
+        "Receive endpoint is returned"
+      ],
+      "tools": [
+        "create_receive_endpoint"
+      ]
     },
     {
       "id": "balance",
@@ -134,15 +201,29 @@
       ],
       "use_when": "The user wants current provider positions or spending availability.",
       "do_not_use_when": "The user wants historical activity; use transactions instead.",
-      "requires_provider_categories": ["Hold"],
-      "requires_provider_capabilities": ["treasury.balance"],
+      "requires_provider_categories": [
+        "Hold"
+      ],
+      "requires_provider_capabilities": [
+        "treasury.balance"
+      ],
       "side_effect": "Read only.",
       "mutation": false,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies a balance question", "Mandate checks balance access", "Provider positions are reconciled", "Distinct balance states are returned"],
-      "tools": ["get_balance"]
+      "flow": [
+        "Agent identifies a balance question",
+        "Mandate checks balance access",
+        "Provider positions are reconciled",
+        "Distinct balance states are returned"
+      ],
+      "tools": [
+        "get_balance"
+      ]
     },
     {
       "id": "transactions",
@@ -162,11 +243,58 @@
       "requires_provider_capabilities": [],
       "side_effect": "Read only.",
       "mutation": false,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies an activity question", "Mandate checks transaction access", "Normalized ledger records are queried", "Economic activity is returned"],
-      "tools": ["get_transactions"]
+      "flow": [
+        "Agent identifies an activity question",
+        "Mandate checks transaction access",
+        "Normalized ledger records are queried",
+        "Economic activity is returned"
+      ],
+      "tools": [
+        "get_transactions"
+      ]
+    },
+    {
+      "id": "liquidity_status",
+      "title": "Check spendable and fundable money",
+      "intent_group": "Understand finances",
+      "summary": "Report earned, spendable, fundable, and pending settlement across the spend route.",
+      "description": "Tell the agent how much of its earned money is actually spendable right now and how much settled capital could be turned into spending power, without manually inspecting each provider.",
+      "direction": "none",
+      "examples": [
+        "How much of my money is actually spendable right now?",
+        "What can I fund spending with from what I have earned?",
+        "Is the route from earned money to spendable money ready?"
+      ],
+      "use_when": "The agent needs a single account-level view of spendable, fundable, and pending capital before deciding to spend or fund.",
+      "do_not_use_when": "The agent only wants per-provider positions; use balance instead.",
+      "requires_provider_categories": [
+        "Spend",
+        "Hold"
+      ],
+      "requires_provider_capabilities": [],
+      "side_effect": "Read only.",
+      "mutation": false,
+      "environments": [
+        "sandbox",
+        "live"
+      ],
+      "introduced": "0.1.0",
+      "updated": "2026-08-07",
+      "flow": [
+        "Agent asks how much is spendable or fundable",
+        "Mandate aggregates positions across the spend route",
+        "Earned, spendable, fundable, and pending amounts are returned",
+        "Spend route readiness is reported"
+      ],
+      "tools": [
+        "get_liquidity_status"
+      ]
     },
     {
       "id": "pay",
@@ -182,15 +310,31 @@
       ],
       "use_when": "Money should go from this economic account to a merchant.",
       "do_not_use_when": "Another party is paying this account; use checkout, invoice, or receive.",
-      "requires_provider_categories": ["Spend"],
-      "requires_provider_capabilities": ["spending.card"],
+      "requires_provider_categories": [
+        "Spend"
+      ],
+      "requires_provider_capabilities": [
+        "spending.card"
+      ],
       "side_effect": "Creates ephemeral payment credentials and reserves funds.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies merchant payment intent", "Mandate checks pay access and funds", "Spend provider is selected", "A controlled payment session is created"],
-      "tools": ["create_payment_session", "get_payment_session", "revoke_payment_session"]
+      "flow": [
+        "Agent identifies merchant payment intent",
+        "Mandate checks pay access and funds",
+        "Spend provider is selected",
+        "A controlled payment session is created"
+      ],
+      "tools": [
+        "create_payment_session",
+        "get_payment_session",
+        "revoke_payment_session"
+      ]
     },
     {
       "id": "transfer",
@@ -206,15 +350,68 @@
       ],
       "use_when": "Existing capital should move to an explicit external destination.",
       "do_not_use_when": "The destination is a merchant checkout needing a controlled card session; use pay.",
-      "requires_provider_categories": ["Hold"],
-      "requires_provider_capabilities": ["treasury.transfer"],
+      "requires_provider_categories": [
+        "Hold"
+      ],
+      "requires_provider_capabilities": [
+        "treasury.transfer"
+      ],
       "side_effect": "Submits an external asset transfer.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies transfer intent", "Mandate checks transfer access", "Treasury provider and destination are validated", "Transfer is submitted"],
-      "tools": ["transfer_funds"]
+      "flow": [
+        "Agent identifies transfer intent",
+        "Mandate checks transfer access",
+        "Treasury provider and destination are validated",
+        "Transfer is submitted"
+      ],
+      "tools": [
+        "transfer_funds"
+      ]
+    },
+    {
+      "id": "fund_spend",
+      "title": "Make earned money spendable",
+      "intent_group": "Use earned capital",
+      "summary": "Turn settled earned capital into spendable purchasing power.",
+      "description": "Move settled capital through the available spend route so the agent does not have to specify the financial plumbing itself.",
+      "direction": "within_account",
+      "examples": [
+        "Make $25 available for spending.",
+        "Fund $5 of spending from what I earned.",
+        "Turn $20 of settled revenue into card spendable balance."
+      ],
+      "use_when": "The agent needs a target amount of spendable money and settled capital exists to fund it.",
+      "do_not_use_when": "The agent wants to send capital to an explicit external destination; use transfer.",
+      "requires_provider_categories": [
+        "Spend",
+        "Hold",
+        "Bridge"
+      ],
+      "requires_provider_capabilities": [],
+      "side_effect": "Moves settled capital across the spend route and updates positions.",
+      "mutation": true,
+      "environments": [
+        "sandbox",
+        "live"
+      ],
+      "introduced": "0.1.0",
+      "updated": "2026-08-07",
+      "flow": [
+        "Agent states the target spendable amount",
+        "Mandate checks the spend route and spendable balance",
+        "A funding movement is planned and submitted",
+        "Positions are updated and the movement is tracked to settlement"
+      ],
+      "tools": [
+        "fund_spend",
+        "get_funding_movement"
+      ]
     },
     {
       "id": "refund",
@@ -224,21 +421,35 @@
       "description": "Return all or part of a settled customer payment through the original Receive provider.",
       "direction": "out_of_account",
       "examples": [
-        "Refund the customer’s last payment.",
+        "Refund the customer\u2019s last payment.",
         "Refund $25 from the Atlas Labs transaction.",
         "Return this settled checkout payment."
       ],
       "use_when": "A settled incoming customer payment should be reversed.",
       "do_not_use_when": "The account is sending a new transfer unrelated to a customer payment.",
-      "requires_provider_categories": ["Receive"],
-      "requires_provider_capabilities": ["revenue.refund"],
+      "requires_provider_categories": [
+        "Receive"
+      ],
+      "requires_provider_capabilities": [
+        "revenue.refund"
+      ],
       "side_effect": "Submits an external refund against a settled transaction.",
       "mutation": true,
-      "environments": ["sandbox", "live"],
+      "environments": [
+        "sandbox",
+        "live"
+      ],
       "introduced": "0.1.0",
       "updated": "2026-08-07",
-      "flow": ["Agent identifies refund intent", "Mandate checks refund access", "Original transaction and provider are resolved", "Refund is submitted"],
-      "tools": ["refund_transaction"]
+      "flow": [
+        "Agent identifies refund intent",
+        "Mandate checks refund access",
+        "Original transaction and provider are resolved",
+        "Refund is submitted"
+      ],
+      "tools": [
+        "refund_transaction"
+      ]
     }
   ]
 }

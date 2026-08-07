@@ -261,6 +261,43 @@ export const CAPABILITY_MANIFEST = {
       ]
     },
     {
+      "id": "liquidity_status",
+      "title": "Check spendable and fundable money",
+      "intent_group": "Understand finances",
+      "summary": "Report earned, spendable, fundable, and pending settlement across the spend route.",
+      "description": "Tell the agent how much of its earned money is actually spendable right now and how much settled capital could be turned into spending power, without manually inspecting each provider.",
+      "direction": "none",
+      "examples": [
+        "How much of my money is actually spendable right now?",
+        "What can I fund spending with from what I have earned?",
+        "Is the route from earned money to spendable money ready?"
+      ],
+      "use_when": "The agent needs a single account-level view of spendable, fundable, and pending capital before deciding to spend or fund.",
+      "do_not_use_when": "The agent only wants per-provider positions; use balance instead.",
+      "requires_provider_categories": [
+        "Spend",
+        "Hold"
+      ],
+      "requires_provider_capabilities": [],
+      "side_effect": "Read only.",
+      "mutation": false,
+      "environments": [
+        "sandbox",
+        "live"
+      ],
+      "introduced": "0.1.0",
+      "updated": "2026-08-07",
+      "flow": [
+        "Agent asks how much is spendable or fundable",
+        "Mandate aggregates positions across the spend route",
+        "Earned, spendable, fundable, and pending amounts are returned",
+        "Spend route readiness is reported"
+      ],
+      "tools": [
+        "get_liquidity_status"
+      ]
+    },
+    {
       "id": "pay",
       "title": "Pay a merchant",
       "intent_group": "Use earned capital",
@@ -336,6 +373,45 @@ export const CAPABILITY_MANIFEST = {
       ],
       "tools": [
         "transfer_funds"
+      ]
+    },
+    {
+      "id": "fund_spend",
+      "title": "Make earned money spendable",
+      "intent_group": "Use earned capital",
+      "summary": "Turn settled earned capital into spendable purchasing power.",
+      "description": "Move settled capital through the available spend route so the agent does not have to specify the financial plumbing itself.",
+      "direction": "within_account",
+      "examples": [
+        "Make $25 available for spending.",
+        "Fund $5 of spending from what I earned.",
+        "Turn $20 of settled revenue into card spendable balance."
+      ],
+      "use_when": "The agent needs a target amount of spendable money and settled capital exists to fund it.",
+      "do_not_use_when": "The agent wants to send capital to an explicit external destination; use transfer.",
+      "requires_provider_categories": [
+        "Spend",
+        "Hold",
+        "Bridge"
+      ],
+      "requires_provider_capabilities": [],
+      "side_effect": "Moves settled capital across the spend route and updates positions.",
+      "mutation": true,
+      "environments": [
+        "sandbox",
+        "live"
+      ],
+      "introduced": "0.1.0",
+      "updated": "2026-08-07",
+      "flow": [
+        "Agent states the target spendable amount",
+        "Mandate checks the spend route and spendable balance",
+        "A funding movement is planned and submitted",
+        "Positions are updated and the movement is tracked to settlement"
+      ],
+      "tools": [
+        "fund_spend",
+        "get_funding_movement"
       ]
     },
     {

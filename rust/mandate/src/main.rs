@@ -86,6 +86,8 @@ enum Command {
     },
     Move(MoveArgs),
     Continuity(ContinuityArgs),
+    Liquidity(LiquidityArgs),
+    FundSpend(FundSpendArgs),
     Admin {
         #[command(subcommand)]
         command: Admin,
@@ -477,6 +479,30 @@ async fn run(c: &Cli) -> Result<Value, CliError> {
             )
             .await
         }
+        Command::Liquidity(x) => {
+            a.call(
+                Method::GET,
+                &format!(
+                    "/v1/liquidity-status?account_id={}&currency={}",
+                    x.account, x.currency
+                ),
+                None,
+            )
+            .await
+        }
+        Command::FundSpend(x) => {
+            a.call(
+                Method::POST,
+                "/v1/fund-spend",
+                Some(
+                    serde_json::to_value(FundSpendRequest {
+                        money: money(&x.money)?,
+                    })
+                    .unwrap(),
+                ),
+            )
+            .await
+        }
         Command::Refund {
             command:
                 Refund::Create {
@@ -731,4 +757,17 @@ struct MoveArgs {
 struct ContinuityArgs {
     #[arg(long, env = "MANDATE_ACCOUNT_ID")]
     account: String,
+}
+#[derive(Args)]
+struct LiquidityArgs {
+    #[arg(long, env = "MANDATE_ACCOUNT_ID")]
+    account: String,
+    #[arg(long, default_value = "USD")]
+    currency: String,
+}
+
+#[derive(Args)]
+struct FundSpendArgs {
+    #[command(flatten)]
+    money: MoneyArgs,
 }

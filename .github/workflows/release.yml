@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.22.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build Mandate.app and DMG
+        run: ./scripts/build-dmg.sh
+
+      - name: Resolve version and asset path
+        id: rel
+        run: |
+          VERSION="$(awk -F'"' '/^version =/{print $2; exit}' Cargo.toml)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "asset=$(pwd)/dist/Mandate-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.rel.outputs.asset }}
+          name: Mandate ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

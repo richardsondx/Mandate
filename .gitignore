@@ -6,7 +6,9 @@ node_modules/
 dist/
 target/
 coverage/
-video/out/
+video/out/*
+!video/out/mandate-demo.mp4
+!video/out/mandate-demo-cover.png
 *.tsbuildinfo
 *.log
 .idea/

@@ -41,6 +41,10 @@ Do not use when The user wants historical activity; use transactions instead.
 Use when The user wants historical or recent account activity.
 Do not use when The user only wants current positions; use balance instead.
 
+### liquidity_status
+Use when The agent needs a single account-level view of spendable, fundable, and pending capital before deciding to spend or fund.
+Do not use when The agent only wants per-provider positions; use balance instead.
+
 ### pay
 Use when Money should go from this economic account to a merchant.
 Do not use when Another party is paying this account; use checkout, invoice, or receive.
@@ -48,6 +52,10 @@ Do not use when Another party is paying this account; use checkout, invoice, or 
 ### transfer
 Use when Existing capital should move to an explicit external destination.
 Do not use when The destination is a merchant checkout needing a controlled card session; use pay.
+
+### fund_spend
+Use when The agent needs a target amount of spendable money and settled capital exists to fund it.
+Do not use when The agent wants to send capital to an explicit external destination; use transfer.
 
 ### refund
 Use when A settled incoming customer payment should be reversed.

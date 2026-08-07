@@ -58,8 +58,8 @@ positions are removed while historical journal entries are preserved.
   - [x] Agent connection and grant management (create/edit/revoke, capability allowlist, authority mode, runtime status)
   - [x] Persistent account setup/readiness checklist
   - [x] Live ledger-entry inspection
-- [ ] Native macOS `.app`, menu-bar shell, or DMG (deferred from v0.1)
-- [~] Homebrew/LaunchAgent packaging (formula skeleton exists; clean-Mac install not accepted)
+- [~] Native macOS menu-bar `.app` and DMG (`scripts/build-app.sh` compiles a Swift menu-bar resident app — Ollama-style: lives in the menu bar, runs the bundled `mandated` daemon, opens the dashboard, and stops the daemon on quit/force-quit via a parent-death watchdog; `scripts/build-dmg.sh` produces a branded drag-to-Applications `Mandate-<version>.dmg`; `scripts/start.sh` is the one-command clone path; `scripts/install.sh` is the curl-able release installer with optional LaunchAgent. Unsigned, not clean-Mac accepted, not notarized)
+- [~] Homebrew/LaunchAgent packaging (formula skeleton + `packaging/com.mandate.mandated.plist.template` exist; clean-Mac install not yet accepted)
 
 ## Core runtime and security
 

@@ -34,6 +34,21 @@ async fn main() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     }
+    // When launched as a child of the Mandate menu-bar app, exit if the parent
+    // (the app) disappears. This is robust to force-quit/crash, not just a
+    // graceful quit, and is gated by an env var so standalone daemon use
+    // (LaunchAgent / dev shell) keeps running independently.
+    if std::env::var_os("MANDATE_PARENT_DEATH_WATCH").is_some() {
+        let initial_parent = unsafe { libc::getppid() };
+        if initial_parent > 1 {
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if unsafe { libc::getppid() } != initial_parent {
+                    std::process::exit(0);
+                }
+            });
+        }
+    }
     tracing::info!(tcp="127.0.0.1:7741",socket=%socket.display(),"mandated ready");
     let tcp_app = router(service.clone());
     let uds_app = router(service);

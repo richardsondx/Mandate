@@ -1,6 +1,6 @@
 export type NavId = 'overview' | 'account' | 'activity' | 'agents' | 'capabilities' | 'guide' | 'system'
 
-export type GuideTabId = 'start' | 'playbook' | 'reference' | 'setup'
+export type GuideTabId = 'start' | 'playbook' | 'reference' | 'setup' | 'providers'
 
 export type RouteStepStatus = 'completed' | 'attention' | 'pending'
 

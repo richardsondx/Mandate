@@ -78,6 +78,29 @@ pub struct BalanceResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LiquidityRoute {
+    pub source_provider: Option<String>,
+    pub destination_provider: Option<String>,
+    pub via: Vec<String>,
+    pub status: String,
+    pub estimated_duration_seconds: Option<u64>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LiquidityStatusResponse {
+    pub account_id: String,
+    pub currency: String,
+    pub decimals: u8,
+    pub earned_settled: AtomicAmount,
+    pub spendable_now: AtomicAmount,
+    pub available_to_fund: AtomicAmount,
+    pub pending_settlement: AtomicAmount,
+    pub spend_route: LiquidityRoute,
+    pub estimated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MoneyRequest {
     pub account_id: String,
     pub amount: AtomicAmount,
@@ -122,6 +145,12 @@ pub struct PaymentSessionRequest {
     pub mode: String,
     #[serde(default)]
     pub merchant: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FundSpendRequest {
+    #[serde(flatten)]
+    pub money: MoneyRequest,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -533,6 +562,24 @@ pub struct MovementRecord {
     pub account_id: String,
     pub quote: MovementQuote,
     pub state: MovementState,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FundingMovement {
+    pub id: String,
+    pub account_id: String,
+    pub currency: String,
+    pub target_spendable: AtomicAmount,
+    pub spendable_before: AtomicAmount,
+    pub funding_amount: AtomicAmount,
+    pub spendable_after: Option<AtomicAmount>,
+    pub source_provider: Option<String>,
+    pub destination_provider: Option<String>,
+    pub route: Vec<String>,
+    pub state: MovementState,
+    pub expected_arrival: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

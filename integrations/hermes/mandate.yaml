@@ -14,8 +14,11 @@ mcp_servers:
         - create_receive_endpoint
         - get_balance
         - get_transactions
+        - get_liquidity_status
         - create_payment_session
         - get_payment_session
         - revoke_payment_session
         - transfer_funds
+        - fund_spend
+        - get_funding_movement
         - refund_transaction

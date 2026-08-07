@@ -58,19 +58,18 @@ describe('Mandate dashboard', () => {
     expect(screen.getByPlaceholderText('Primary treasury')).toBeInTheDocument()
   })
 
-  it('explains how to sign in when the local dashboard is opened directly', async () => {
+  it('loads the dashboard on a direct visit without a sign-in gate', async () => {
+    vi.stubGlobal('scrollTo', vi.fn())
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
       if (url.startsWith('/v1/setup/status')) return json({ initialized: true, runtimes: { openclaw: false, hermes: true } })
-      return json({}, 401)
+      if (url.startsWith('/v1/admin/diagnostics')) return json(diagnostics)
+      return json(snapshot)
     }))
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'This tab isn’t signed in.' })).toBeInTheDocument()
-    expect(screen.getByText('cargo run -p mandate -- dashboard')).toBeInTheDocument()
-    expect(screen.getByText(/direct visit to the local address/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'View demo preview instead' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Set up Primary treasury.' })).toBeInTheDocument()
   })
 
   it('shows a clean account and category-specific provider setup', async () => {
@@ -289,9 +288,17 @@ describe('Mandate dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Prompt Playbook' })).toBeInTheDocument()
     expect(screen.getByText('Accept a payment')).toBeInTheDocument()
     expect(screen.getByText('Pay a merchant')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy all as Markdown' }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('# Mandate Prompt Playbook')))
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('### Accept a payment (`checkout`)'))
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('- Create a way for someone to pay me $20.'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Reference' }))
     expect(await screen.findByRole('heading', { name: 'Capability reference' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy all as Markdown' }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('# Mandate Capability Reference')))
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('### Guidance'))
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(expect.stringContaining('### Agent tools'))
     fireEvent.click(screen.getByRole('button', { name: /checkout.*Accept a payment/i }))
     expect(await screen.findByRole('heading', { name: 'Accept a payment' })).toBeInTheDocument()
     expect(screen.getByText('Do not use when')).toBeInTheDocument()
@@ -341,6 +348,38 @@ describe('Mandate dashboard', () => {
     fireEvent.click(deepLinkBtn)
     expect(await screen.findByRole('heading', { name: 'Connect the economic loop' })).toBeInTheDocument()
     expect(screen.getByText('Connection is not continuity.')).toBeInTheDocument()
+  })
+
+  it('routes conceptual provider links to the Providers tab and Build-a-provider dialog', async () => {
+    vi.stubGlobal('scrollTo', vi.fn())
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/v1/setup/status')) return json({ initialized: true, runtimes: { openclaw: false, hermes: true } })
+      if (url.startsWith('/v1/admin/diagnostics')) return json(diagnostics)
+      return json(snapshot)
+    }))
+    render(<App />)
+    await screen.findByText('Primary treasury')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Capabilities' })[0])
+    expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()
+
+    // "Explore provider types" is conceptual -> Providers tab, not Setup.
+    fireEvent.click(screen.getByRole('button', { name: /Explore provider types/i }))
+    expect(await screen.findByRole('heading', { name: 'Providers' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'The four roles in Mandate' })).toBeInTheDocument()
+
+    // "How Receive providers work" is also conceptual -> Providers tab (with focus).
+    fireEvent.click(screen.getAllByRole('button', { name: 'Capabilities' })[0])
+    expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /How Receive providers work/i }))
+    expect(await screen.findByRole('heading', { name: 'Providers' })).toBeInTheDocument()
+
+    // "Build a Mandate provider" opens the developer SDK dialog.
+    fireEvent.click(screen.getByRole('button', { name: /Build a Mandate provider/i }))
+    expect(await screen.findByRole('heading', { name: 'Build a Mandate provider' })).toBeInTheDocument()
+    expect(screen.getByText(/types, runner, redaction, conformance/i)).toBeInTheDocument()
+    expect(screen.getByText('initialize(config)')).toBeInTheDocument()
   })
 
   it('advances the external-agent playground only from matching daemon evidence', async () => {
@@ -397,7 +436,7 @@ describe('Mandate dashboard', () => {
       />,
     )
 
-    expect(screen.getByText('8 of 8 capabilities available')).toBeInTheDocument()
+    expect(screen.getByText('10 of 10 capabilities available')).toBeInTheDocument()
     expect(screen.queryByText(/Agent connected$/)).not.toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'How it works' })[0])
     expect(await screen.findByRole('heading', { name: 'Accept a payment' })).toBeInTheDocument()

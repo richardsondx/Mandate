@@ -109,6 +109,27 @@ Review incoming, outgoing, pending, and settled economic activity across connect
 
 Introduced in Mandate 0.1.0 · Updated 2026-08-07
 
+## Check spendable and fundable money
+
+`liquidity_status` · Understand finances · Read only
+
+Tell the agent how much of its earned money is actually spendable right now and how much settled capital could be turned into spending power, without manually inspecting each provider.
+
+**Try saying**
+- “How much of my money is actually spendable right now?”
+- “What can I fund spending with from what I have earned?”
+- “Is the route from earned money to spendable money ready?”
+
+**Use when:** The agent needs a single account-level view of spendable, fundable, and pending capital before deciding to spend or fund.
+
+**Do not use when:** The agent only wants per-provider positions; use balance instead.
+
+**Requires:** Spend, Hold provider
+
+**Effect:** Read only.
+
+Introduced in Mandate 0.1.0 · Updated 2026-08-07
+
 ## Pay a merchant
 
 `pay` · Use earned capital · Mutation
@@ -148,6 +169,27 @@ Send existing capital through a connected treasury provider to an explicit addre
 **Requires:** Hold provider
 
 **Effect:** Submits an external asset transfer.
+
+Introduced in Mandate 0.1.0 · Updated 2026-08-07
+
+## Make earned money spendable
+
+`fund_spend` · Use earned capital · Mutation
+
+Move settled capital through the available spend route so the agent does not have to specify the financial plumbing itself.
+
+**Try saying**
+- “Make $25 available for spending.”
+- “Fund $5 of spending from what I earned.”
+- “Turn $20 of settled revenue into card spendable balance.”
+
+**Use when:** The agent needs a target amount of spendable money and settled capital exists to fund it.
+
+**Do not use when:** The agent wants to send capital to an explicit external destination; use transfer.
+
+**Requires:** Spend, Hold, Bridge provider
+
+**Effect:** Moves settled capital across the spend route and updates positions.
 
 Introduced in Mandate 0.1.0 · Updated 2026-08-07
 

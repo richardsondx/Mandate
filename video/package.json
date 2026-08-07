@@ -6,7 +6,7 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts MandateDemo out/mandate-demo.mp4",
-    "render:still": "remotion still src/index.ts MandateDemo out/mandate-demo-cover.png --frame=90",
+    "render:still": "remotion still src/index.ts MandateDemo out/mandate-demo-cover.png --frame=468",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

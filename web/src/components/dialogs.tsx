@@ -106,6 +106,37 @@ export function AccountingDialog({ onClose }: { onClose: () => void }) {
   </Modal>
 }
 
+export function BuildProviderDialog({ onClose }: { onClose: () => void }) {
+  const contract: { method: string; purpose: string }[] = [
+    { method: 'manifest', purpose: 'Declare id, display name, category, and version.' },
+    { method: 'initialize(config)', purpose: 'Validate credentials and return provider health.' },
+    { method: 'validateConfiguration(config)', purpose: 'Check keys and required fields before saving.' },
+    { method: 'capabilities()', purpose: 'Expose the operations this provider implements.' },
+    { method: 'execute(operation, context)', purpose: 'Run a capability and return a provider result.' },
+    { method: 'retrieveStatus(externalId, context)', purpose: 'Reconcile a single external operation.' },
+    { method: 'incrementalSync(cursor, context)', purpose: 'Pull changed records since the last cursor.' },
+    { method: 'fullReconciliation(context)', purpose: 'Reconcile the full provider state.' },
+    { method: 'shutdown()', purpose: 'Release connections and background work.' },
+  ]
+  const steps = [
+    'Scaffold a provider package under providers/ using the provider-sdk.',
+    'Implement the ProviderPlugin contract below for your financial rail.',
+    'Declare agent capabilities and protocol capabilities so Mandate can route prompts to it.',
+    'Pass the bundled conformance tests against sandbox fixtures.',
+    'Register the provider with mandated so it appears as a connectable capability.',
+  ]
+  return <Modal eyebrow="Provider SDK" title="Build a Mandate provider" onClose={onClose} wide>
+    <div className="dialog-form">
+      <div className="form-truth"><ShieldCheck size={16} /><p><strong>Mandate speaks to any financial rail through a provider plugin.</strong> Implement the contract, pass conformance, and your fintech product becomes a connectable receive, hold, spend, or money-route capability — no changes to the agent layer.</p></div>
+      <div className="provider-credentials-head"><Server size={16} /><strong>ProviderPlugin contract</strong><small>packages/provider-sdk — types, runner, redaction, conformance</small></div>
+      <dl className="build-provider-contract">{contract.map(row => <div key={row.method}><dt><code>{row.method}</code></dt><dd>{row.purpose}</dd></div>)}</dl>
+      <p className="recipe-pill-label">How to ship a provider</p>
+      <ol className="build-provider-steps">{steps.map((step, i) => <li key={step}><strong>{i + 1}.</strong> {step}</li>)}</ol>
+      <div className="form-truth"><Check size={16} /><p>The SDK already powers Stripe, Coinbase CDP, Lithic, and Bridge. Use those plugins as reference implementations under <code>providers/</code>.</p></div>
+    </div>
+  </Modal>
+}
+
 export function ProviderDialog({ accountId, providers, provider, category, environment = 'sandbox', source, onClose, onComplete }: { accountId: string; providers: Provider[]; provider?: Provider; category?: ProviderCategory; environment?: EnvironmentMode; source: DataSource; onClose: () => void; onComplete: (message: string) => void }) {
   const [selectedId, setSelectedId] = useState(provider?.id ?? '')
   const [busy, setBusy] = useState(false)
@@ -266,7 +297,7 @@ export function SandboxSimulatorDialog({ onClose, onSimulate }: { onClose: () =>
   )
 }
 
-const ALL_CAPABILITIES = ['balance', 'receive', 'invoice', 'checkout', 'pay', 'transfer', 'transactions', 'refund']
+const ALL_CAPABILITIES = ['balance', 'receive', 'invoice', 'checkout', 'pay', 'transfer', 'transactions', 'refund', 'liquidity_status', 'fund_spend']
 
 export function AgentDialog({ accountId, detected, source, agent, presetRuntime, onClose, onComplete, onTestConnection }: { accountId: string; detected: { openclaw: boolean; hermes: boolean }; source: DataSource; agent?: Agent; presetRuntime?: 'openclaw' | 'hermes'; onClose: () => void; onComplete: (message: string) => void; onTestConnection?: (agent: Agent) => void }) {
   const [runtime, setRuntime] = useState<'hermes' | 'openclaw' | 'custom'>(presetRuntime ?? 'hermes')
@@ -648,4 +679,3 @@ export function TestAgentDialog({ agent, accountName, accountId, providers, sour
     </Modal>
   )
 }
-

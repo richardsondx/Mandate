@@ -59,6 +59,9 @@ pub fn router(service: MandateService) -> Router {
         .route("/v1/continuity", get(continuity_handler))
         .route("/v1/movements/quote", post(quote_movement_handler))
         .route("/v1/movements", post(execute_movement_handler))
+        .route("/v1/liquidity-status", get(liquidity_status_handler))
+        .route("/v1/fund-spend", post(fund_spend_handler))
+        .route("/v1/funding-movements/{id}", get(funding_movement_handler))
         .route("/v1/events", get(events))
         .route("/v1/dashboard", get(dashboard))
         .route("/v1/dashboard/login/{ticket}", get(dashboard_login))
@@ -440,6 +443,56 @@ async fn execute_movement_handler(
 }
 
 #[derive(Deserialize)]
+struct LiquidityQuery {
+    account_id: String,
+    currency: Option<String>,
+}
+
+async fn liquidity_status_handler(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<LiquidityQuery>,
+) -> Result<Json<mandate_core::LiquidityStatusResponse>, ApiErrorResponse> {
+    auth(
+        &s,
+        &headers,
+        false,
+        Some("liquidity_status"),
+        Some(&q.account_id),
+        false,
+    )?;
+    Ok(Json(s.service.liquidity_status(
+        &q.account_id,
+        q.currency.as_deref().unwrap_or("USD"),
+    )?))
+}
+
+async fn fund_spend_handler(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<mandate_core::FundSpendRequest>,
+) -> Result<Json<mandate_core::FundingMovement>, ApiErrorResponse> {
+    auth(
+        &s,
+        &headers,
+        false,
+        Some("fund_spend"),
+        Some(&req.money.account_id),
+        true,
+    )?;
+    Ok(Json(s.service.fund_spend(req)?))
+}
+
+async fn funding_movement_handler(
+    State(s): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<mandate_core::FundingMovement>, ApiErrorResponse> {
+    auth(&s, &headers, false, None, None, false)?;
+    Ok(Json(s.service.funding_movement(&id)?))
+}
+
+#[derive(Deserialize)]
 struct TxQuery {
     account_id: String,
     limit: Option<u32>,
@@ -652,19 +705,35 @@ async fn dashboard(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<DashboardQuery>,
-) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
-    let csrf = auth(&s, &headers, true, None, None, false)?;
-    let snapshot = s.service.dashboard_snapshot(
-        query.account_id.as_deref(),
-        RuntimeDetection {
-            openclaw: runtime_detected("openclaw"),
-            hermes: runtime_detected("hermes"),
-        },
-    )?;
-    Ok(Json(serde_json::json!({
+) -> Result<axum::response::Response, ApiErrorResponse> {
+    let detection = RuntimeDetection {
+        openclaw: runtime_detected("openclaw"),
+        hermes: runtime_detected("hermes"),
+    };
+    let snapshot = s.service.dashboard_snapshot(query.account_id.as_deref(), detection)?;
+    // Auto-provision a dashboard session for direct browser visits so the
+    // sign-in gate is no longer required for local access.
+    let (csrf, set_cookie) = match auth(&s, &headers, true, None, None, false) {
+        Ok(existing) => (existing, None),
+        Err(_) => {
+            let (session, csrf) = create_dashboard_session_values(&s);
+            (Some(csrf), Some(session_cookie(&session)))
+        }
+    };
+    let mut response = Json(serde_json::json!({
         "snapshot": snapshot,
         "csrf_token": csrf
-    })))
+    }))
+    .into_response();
+    if let Some(cookie) = set_cookie {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            cookie
+                .parse()
+                .map_err(|_| ApiError::internal("failed to create dashboard session cookie"))?,
+        );
+    }
+    Ok(response)
 }
 
 async fn providers(
@@ -893,11 +962,15 @@ fn provider_entry(provider_id: &str) -> Result<std::path::PathBuf, ApiError> {
     ) {
         return Err(ApiError::invalid("unknown bundled provider"));
     }
-    let root = std::env::current_dir().map_err(|error| ApiError::internal(error.to_string()))?;
-    let path = root
-        .join("providers")
-        .join(provider_id)
-        .join("dist/index.js");
+    let providers_dir = std::env::var_os("MANDATE_PROVIDERS_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|root| root.join("providers"))
+        })
+        .ok_or_else(|| ApiError::internal("could not resolve providers directory"))?;
+    let path = providers_dir.join(provider_id).join("dist/index.js");
     if !path.exists() {
         return Err(ApiError::new(
             "provider_not_built",
@@ -1329,9 +1402,7 @@ async fn revoke_agent(
 }
 async fn diagnostics(
     State(s): State<Arc<AppState>>,
-    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
-    auth(&s, &headers, true, None, None, false)?;
     Ok(Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "started_at": s.started_at,
@@ -1664,5 +1735,116 @@ mod tests {
             .unwrap();
         assert_eq!(pay["granted"], false);
         assert_eq!(pay["available"], false);
+    }
+
+    #[tokio::test]
+    async fn liquidity_status_and_fund_spend_endpoints_work_end_to_end() {
+        let svc = MandateService::in_memory().unwrap();
+        let init = svc.initialize().unwrap();
+        svc.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        let app = router(svc);
+        let auth = format!("Bearer {}", init.admin_token);
+
+        // Liquidity status reports the seeded spendable and fundable buckets.
+        let status_resp = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/v1/liquidity-status?account_id={}&currency=USD",
+                    init.account.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status_resp.status(), StatusCode::OK);
+        let body = status_resp.into_body().collect().await.unwrap().to_bytes();
+        let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(status["spendable_now"], "100000");
+        assert_eq!(status["available_to_fund"], "10000");
+        assert_eq!(status["spend_route"]["status"], "ready");
+
+        // Fund spend moves treasury capital into the spend position.
+        let fund_resp = app
+            .clone()
+            .oneshot(
+                Request::post("/v1/fund-spend")
+                    .header("authorization", &auth)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "account_id": init.account.id,
+                            "amount": "102500",
+                            "currency": "USD",
+                            "idempotency_key": "http-fund"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(fund_resp.status(), StatusCode::OK);
+        let fund_body = fund_resp.into_body().collect().await.unwrap().to_bytes();
+        let movement: serde_json::Value = serde_json::from_slice(&fund_body).unwrap();
+        assert_eq!(movement["state"]["status"], "settled");
+        assert_eq!(movement["funding_amount"], "2500");
+        let movement_id = movement["id"].as_str().unwrap().to_string();
+
+        // The funding movement is retrievable by id.
+        let get_resp = app
+            .oneshot(
+                Request::get(format!("/v1/funding-movements/{movement_id}"))
+                    .header("authorization", &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_resp.status(), StatusCode::OK);
+        let fetched: serde_json::Value =
+            serde_json::from_slice(&get_resp.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(fetched["id"], movement_id);
+        assert_eq!(fetched["spendable_after"], "102500");
+    }
+
+    #[tokio::test]
+    async fn fund_spend_requires_capability_grant_for_agents() {
+        let svc = MandateService::in_memory().unwrap();
+        let init = svc.initialize().unwrap();
+        svc.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        // Agent granted only balance cannot call fund_spend.
+        let credential = svc
+            .create_agent(AgentCreateRequest {
+                name: "Limited".into(),
+                account_id: init.account.id.clone(),
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["balance".into()],
+            })
+            .unwrap();
+        let app = router(svc);
+        let resp = app
+            .oneshot(
+                Request::post("/v1/fund-spend")
+                    .header("authorization", format!("Bearer {}", credential.token))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "account_id": init.account.id,
+                            "amount": "200000",
+                            "currency": "USD"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

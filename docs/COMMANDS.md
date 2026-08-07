@@ -26,6 +26,8 @@ mandate pay create --account <id> --amount <atomic> --currency USD --mode online
 mandate pay status <session-id> --json
 mandate pay revoke <session-id> --json
 mandate transfer --account <id> --amount <atomic> --currency USDC --to <address> --network base-sepolia --json
+mandate liquidity --account <id> --currency USD --json
+mandate fund-spend --account <id> --amount <atomic> --currency USD --json
 mandate refund create <transaction-id> --account <id> --amount <atomic> --currency USD --json
 mandate transactions list --account <id> --json
 ```

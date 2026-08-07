@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   ArrowRight,
   Banknote,
+  Blocks,
   BookOpen,
   Check,
   ChevronRight,
@@ -55,6 +56,11 @@ const TAB_COPY: Record<GuideTabId, { eyebrow: string; title: string; subtitle: s
     title: 'Connect the economic loop',
     subtitle: 'Configure the providers and external routes your prompts need to become executable.',
   },
+  providers: {
+    eyebrow: 'Provider infrastructure',
+    title: 'Providers',
+    subtitle: 'What each provider type does, what you can connect, and how each one fits into Mandate.',
+  },
 }
 
 const ICONS: Record<string, typeof Banknote> = {
@@ -71,6 +77,49 @@ const OPERATION_KIND: Record<string, string> = {
   pay: 'payment_session',
   transfer: 'transfer',
   refund: 'refund',
+  fund_spend: 'spend.funded',
+}
+
+const PROVIDER_TYPES: { category: ProviderGuideType; label: string; icon: typeof CreditCard; tagline: string; examples: string }[] = [
+  { category: 'Receive', label: 'Receive', icon: CreditCard, tagline: 'Bring earned value into Mandate.', examples: 'Stripe, PayPal, marketplaces, wallets…' },
+  { category: 'Hold', label: 'Hold', icon: Wallet, tagline: 'Store reusable operating capital.', examples: 'Wallets, bank accounts, financial accounts…' },
+  { category: 'Spend', label: 'Spend', icon: Zap, tagline: 'Give agents purchasing power.', examples: 'Cards, bank transfers, onchain payments…' },
+  { category: 'Bridge', label: 'Money routes', icon: Route, tagline: 'Connect otherwise isolated positions.', examples: 'Bridge, ACH, conversions, provider settlement…' },
+]
+
+const PROVIDER_SPECS: Record<string, { fitsIntoMandate: string; whatFor: string; typicalFlow: string; inMandate: string[]; outsideMandate: string[]; commonSetups: string[] }> = {
+  'stripe-revenue': {
+    fitsIntoMandate: 'Receive',
+    whatFor: 'Let your agent accept customer payments.',
+    typicalFlow: 'Customer → Stripe → Treasury',
+    inMandate: ['Checkout creation', 'Invoice creation', 'Refunds', 'Ledger events'],
+    outsideMandate: ['Stripe account activation', 'Settlement destination'],
+    commonSetups: ['Stripe → Bridge → Coinbase', 'Stripe → Financial Account'],
+  },
+  'coinbase-cdp-wallet': {
+    fitsIntoMandate: 'Hold',
+    whatFor: 'Hold USDC and let your agent move treasury on Base.',
+    typicalFlow: 'Settlement → Coinbase CDP → Spend',
+    inMandate: ['Balance reads', 'On-chain receive', 'Transfers', 'Transaction tracking'],
+    outsideMandate: ['CDP project & API keys', 'Wallet policy & gas sponsorship'],
+    commonSetups: ['Bridge → Coinbase CDP → Lithic', 'Onchain stablecoin treasury'],
+  },
+  'lithic-card': {
+    fitsIntoMandate: 'Spend',
+    whatFor: 'Give your agent controlled card spending power.',
+    typicalFlow: 'Treasury → Lithic → Merchant',
+    inMandate: ['Card session creation', 'Authorization handling', 'Refunds'],
+    outsideMandate: ['Lithic card program approval', 'Funding arrangement'],
+    commonSetups: ['Coinbase → Lithic', 'Stripe → Bridge → Coinbase → Lithic'],
+  },
+  'bridge-rail': {
+    fitsIntoMandate: 'Money route',
+    whatFor: 'Move between fiat and stablecoin so isolated positions connect.',
+    typicalFlow: 'Fiat → Bridge → Stablecoin',
+    inMandate: ['Virtual account routing', 'Liquidation addresses', 'Conversion quotes'],
+    outsideMandate: ['Bridge account & API keys', 'Compliance / KYC status'],
+    commonSetups: ['Stripe → Bridge → Coinbase', 'Fiat settlement rail'],
+  },
 }
 
 function accountCapabilities(data: DashboardData): CapabilityAvailability[] {
@@ -90,17 +139,27 @@ function accountCapabilities(data: DashboardData): CapabilityAvailability[] {
     const providerIds: string[] = CAPABILITY_MANIFEST.providers
       .filter(provider =>
         executableProviderIds.has(provider.id)
-        && provider.agent_capabilities.some(capability => capability === definition.id),
+        && (provider.agent_capabilities.some(capability => capability === definition.id)
+          || (definition.requires_provider_categories as readonly string[]).includes(provider.category)),
       )
       .map(provider => provider.id)
     const routeRequired = definition.requires_provider_categories.length > 0
+    const routeReady =
+      !routeRequired
+      || (definition.requires_provider_categories as readonly string[]).every(category =>
+        CAPABILITY_MANIFEST.providers.some(
+          provider =>
+            provider.category === category
+            && executableProviderIds.has(provider.id),
+        ),
+      )
     const granted = current?.granted ?? true
-    const available = granted && (!routeRequired || providerIds.length > 0)
+    const available = granted && (!routeRequired || routeReady)
     const connectedProviders = data.providers.filter(provider => providerIds.includes(provider.id))
     const unavailableReason = !granted
       ? 'This agent grant does not allow this capability.'
-      : routeRequired && providerIds.length === 0
-        ? `Connect a ${definition.requires_provider_categories.join(' or ')} provider to make this capability executable.`
+      : routeRequired && !routeReady
+        ? `Connect a ${definition.requires_provider_categories.join(' and ')} provider to make this capability executable.`
         : null
 
     return {
@@ -229,12 +288,98 @@ function CapabilityStatus({ capability }: { capability: CapabilityAvailability }
   return <Pill tone="neutral">Setup required</Pill>
 }
 
+function availabilityLabel(capability: CapabilityAvailability) {
+  if (capability.available) return 'Available now'
+  if (!capability.granted) return 'Not in agent grant'
+  return `Setup required${capability.unavailable_reason ? ` — ${capability.unavailable_reason}` : ''}`
+}
+
+function markdownList(values: string[], emptyLabel = 'None') {
+  return values.length ? values.join(', ') : emptyLabel
+}
+
+export function playbookMarkdown(data: DashboardData, capabilities: CapabilityAvailability[]) {
+  const groups = [...new Set(capabilities.map(capability => capability.intent_group))]
+  return [
+    '# Mandate Prompt Playbook',
+    '',
+    `Account: ${data.accountName} (\`${data.accountId}\`)`,
+    `Capability spec: ${data.capabilities?.spec_version ?? CAPABILITY_MANIFEST.spec_version}`,
+    '',
+    'Use these prompts with an AI agent connected to this Mandate economic account.',
+    '',
+    ...groups.flatMap(group => [
+      `## ${group}`,
+      '',
+      ...capabilities.filter(capability => capability.intent_group === group).flatMap(capability => [
+        `### ${capability.title} (\`${capability.id}\`)`,
+        '',
+        capability.summary,
+        '',
+        `**Availability:** ${availabilityLabel(capability)}`,
+        '',
+        ...capability.examples.map(example => `- ${example}`),
+        '',
+      ]),
+    ]),
+  ].join('\n').trimEnd()
+}
+
+export function referenceMarkdown(data: DashboardData, capabilities: CapabilityAvailability[]) {
+  return [
+    '# Mandate Capability Reference',
+    '',
+    `Account: ${data.accountName} (\`${data.accountId}\`)`,
+    `Capability spec: ${data.capabilities?.spec_version ?? CAPABILITY_MANIFEST.spec_version}`,
+    '',
+    'Current semantic and execution reference for an AI agent operating this Mandate economic account.',
+    '',
+    ...capabilities.flatMap(capability => [
+      `## ${capability.title} (\`${capability.id}\`)`,
+      '',
+      capability.description,
+      '',
+      `- **Intent group:** ${capability.intent_group}`,
+      `- **Availability:** ${availabilityLabel(capability)}`,
+      `- **Money direction:** ${capability.direction}`,
+      `- **Environment:** ${capability.environment ?? markdownList(capability.environments)}`,
+      `- **Provider categories required:** ${markdownList(capability.requires_provider_categories)}`,
+      `- **Connected providers:** ${markdownList(capability.provider_ids)}`,
+      `- **Provider capabilities required:** ${markdownList(capability.requires_provider_capabilities)}`,
+      `- **Side effect:** ${capability.side_effect}`,
+      `- **Mutation:** ${capability.mutation ? 'Yes' : 'No'}`,
+      `- **Introduced:** Mandate ${capability.introduced}`,
+      `- **Updated:** ${capability.updated}`,
+      '',
+      '### Guidance',
+      '',
+      `**Use when:** ${capability.use_when}`,
+      '',
+      `**Do not use when:** ${capability.do_not_use_when}`,
+      '',
+      '### Example prompts',
+      '',
+      ...capability.examples.map(example => `- ${example}`),
+      '',
+      '### Execution flow',
+      '',
+      ...capability.flow.map((step, index) => `${index + 1}. ${step}`),
+      '',
+      '### Agent tools',
+      '',
+      markdownList(capability.tools.map(tool => `\`${tool}\``)),
+      '',
+    ]),
+  ].join('\n').trimEnd()
+}
+
 export function Guide({
   data,
   events,
   navigate,
   onOpenProvider,
   notify,
+  onBuildProvider,
   initialTab = 'start',
   providerFocus,
 }: {
@@ -243,16 +388,19 @@ export function Guide({
   navigate: (id: NavId) => void
   onOpenProvider: (providerId?: string) => void
   notify: (message: string) => void
+  onBuildProvider?: () => void
   initialTab?: GuideTabId
   providerFocus?: ProviderGuideType
 }) {
   const [activeTab, setActiveTab] = useState<GuideTabId>(initialTab)
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null)
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
   const [copied, setCopied] = useState<{ capabilityId: string; copiedAt: number } | null>(null)
   const capabilities = useMemo(() => accountCapabilities(data), [data])
   const topology = getAccountTopology(data)
   const copy = TAB_COPY[activeTab]
   const selected = capabilities.find(capability => capability.id === selectedCapabilityId)
+  const selectedProvider = data.providers.find(provider => provider.id === selectedProviderId)
   const availableCount = capabilities.filter(capability => capability.available).length
   const connectedAgent = data.agents.find(agent => agent.status === 'connected')
   const matchingEvent = copied
@@ -263,6 +411,14 @@ export function Guide({
     await navigator.clipboard?.writeText(example)
     setCopied({ capabilityId: capability.id, copiedAt: Date.now() })
     notify('Prompt copied. Paste it into your agent; Mandate is watching for activity.')
+  }
+
+  const copyAllAsMarkdown = async (tab: 'playbook' | 'reference') => {
+    const markdown = tab === 'playbook'
+      ? playbookMarkdown(data, capabilities)
+      : referenceMarkdown(data, capabilities)
+    await navigator.clipboard?.writeText(markdown)
+    notify(`${tab === 'playbook' ? 'Playbook' : 'Reference'} copied as Markdown for your AI agent.`)
   }
 
   const openCapability = (id: string, tab: GuideTabId = 'reference') => {
@@ -288,6 +444,7 @@ export function Guide({
             ['playbook', Sparkles, 'Playbook'],
             ['reference', BookOpen, 'Reference'],
             ['setup', Layers, 'Setup'],
+            ['providers', Blocks, 'Providers'],
           ] as const).map(([id, Icon, label]) => (
             <button key={id} className={`guide-tab ${activeTab === id ? 'active' : ''}`} onClick={() => setActiveTab(id)}>
               <Icon size={15} /><span>{label}</span>
@@ -350,6 +507,11 @@ export function Guide({
 
       {activeTab === 'playbook' && (
         <div className="guide-section page-enter">
+          <SectionHeading
+            eyebrow="Agent-ready Markdown"
+            title="All prompt recipes"
+            action={<button className="secondary-button" onClick={() => copyAllAsMarkdown('playbook')}><Clipboard size={14} /> Copy all as Markdown</button>}
+          />
           {[...new Set(capabilities.map(capability => capability.intent_group))].map(group => (
             <section className="playbook-group" key={group}>
               <SectionHeading eyebrow={group.toUpperCase()} title={group} />
@@ -375,7 +537,10 @@ export function Guide({
         <div className="guide-section page-enter">
           {selected ? (
             <article className="capability-detail">
-              <button className="text-action" onClick={() => setSelectedCapabilityId(null)}>← All capabilities</button>
+              <div className="page-actions-group">
+                <button className="text-action" onClick={() => setSelectedCapabilityId(null)}>← All capabilities</button>
+                <button className="secondary-button" onClick={() => copyAllAsMarkdown('reference')}><Clipboard size={14} /> Copy all as Markdown</button>
+              </div>
               <header className="capability-detail-header">
                 <div><p className="eyebrow">{selected.intent_group}</p><h2>{selected.title}</h2><p>{selected.description}</p></div>
                 <CapabilityStatus capability={selected} />
@@ -408,7 +573,11 @@ export function Guide({
             </article>
           ) : (
             <>
-              <SectionHeading eyebrow="By human intent" title="Capability reference" action={<span className="recipe-tagline">Current for {data.accountName}</span>} />
+              <SectionHeading
+                eyebrow="By human intent"
+                title="Capability reference"
+                action={<div className="page-actions-group"><button className="secondary-button" onClick={() => copyAllAsMarkdown('reference')}><Clipboard size={14} /> Copy all as Markdown</button></div>}
+              />
               <div className="capability-reference-list">
                 {capabilities.map(capability => (
                   <button key={capability.id} onClick={() => setSelectedCapabilityId(capability.id)}>
@@ -469,11 +638,94 @@ export function Guide({
               <button className={`provider-catalog-card ${providerFocus === provider.category ? 'provider-type-card--focused' : ''}`} key={provider.id} onClick={() => onOpenProvider(provider.id)}>
                 <ProviderLogo provider={provider.id} label={provider.name} />
                 <span><strong>{provider.name}</strong><small>{provider.category === 'Bridge' ? 'Money route' : provider.category}</small><code>{provider.capabilities.join(' · ') || 'Route capabilities'}</code></span>
-                <Pill tone={provider.status !== 'disconnected' ? 'positive' : 'neutral'}>{provider.status !== 'disconnected' ? provider.detail : 'Explore'}</Pill>
-                <ArrowRight size={15} />
-              </button>
-            ))}
-          </div>
+               <Pill tone={provider.status !== 'disconnected' ? 'positive' : 'neutral'}>{provider.status !== 'disconnected' ? provider.detail : 'Explore'}</Pill>
+               <ArrowRight size={15} />
+             </button>
+           ))}
+         </div>
+       </div>
+     )}
+      {activeTab === 'providers' && (
+        <div className="guide-section page-enter">
+          {selectedProvider ? (
+            <article className="provider-spec-card">
+              <button className="text-action" onClick={() => setSelectedProviderId(null)}>← All providers</button>
+              <header className="spec-card-header">
+                <div>
+                  <h3>{selectedProvider.name}</h3>
+                  <p className="spec-role">{selectedProvider.category === 'Bridge' ? 'Money route' : selectedProvider.category}</p>
+                </div>
+                <ProviderLogo provider={selectedProvider.id} label={selectedProvider.name} />
+              </header>
+              <div className="spec-closed-loop-note">
+                <strong>{PROVIDER_SPECS[selectedProvider.id]?.fitsIntoMandate ?? selectedProvider.category}</strong>
+                <p>Typical flow · {PROVIDER_SPECS[selectedProvider.id]?.typicalFlow ?? 'Provider route'}</p>
+              </div>
+              <div className="spec-section">
+                <p className="recipe-pill-label">What it's for</p>
+                <p className="spec-desc">{PROVIDER_SPECS[selectedProvider.id]?.whatFor ?? selectedProvider.description}</p>
+              </div>
+              <div className="spec-section">
+                <p className="recipe-pill-label">Capabilities</p>
+                <p className="spec-desc">{selectedProvider.capabilities.join(' · ') || 'Route capabilities'}</p>
+              </div>
+              <div className="spec-section">
+                <p className="recipe-pill-label">What Mandate handles</p>
+                <ul>{(PROVIDER_SPECS[selectedProvider.id]?.inMandate ?? ['Capability orchestration', 'Ledger entries']).map(item => <li key={item}><Check size={13} className="spec-check" />{item}</li>)}</ul>
+              </div>
+              <div className="spec-section">
+                <p className="recipe-pill-label">What you configure outside Mandate</p>
+                <ul>{(PROVIDER_SPECS[selectedProvider.id]?.outsideMandate ?? ['Provider account & credentials']).map(item => <li key={item}><span className="spec-dot" />{item}</li>)}</ul>
+              </div>
+              <div className="spec-section">
+                <p className="recipe-pill-label">Common setups</p>
+                <ul>{(PROVIDER_SPECS[selectedProvider.id]?.commonSetups ?? []).map(item => <li key={item}><ArrowRight size={13} />{item}</li>)}</ul>
+              </div>
+              <footer className="spec-card-footer">
+                <Pill tone={selectedProvider.status !== 'disconnected' ? 'positive' : 'neutral'}>{selectedProvider.status !== 'disconnected' ? selectedProvider.detail : 'Not connected'}</Pill>
+                <button className="primary-button" onClick={() => onOpenProvider(selectedProvider.id)}>{selectedProvider.status !== 'disconnected' ? 'Manage' : 'Connect'} {selectedProvider.name} <ExternalLink size={13} /></button>
+              </footer>
+            </article>
+          ) : (
+            <>
+              <SectionHeading eyebrow="Provider types" title="The four roles in Mandate" action={<span className="recipe-tagline">Capability first, provider second</span>} />
+              <div className="provider-type-grid">
+                {PROVIDER_TYPES.map(providerType => {
+                  const providers = data.providers.filter(provider => provider.category === providerType.category)
+                  return (
+                    <article className={`provider-type-card ${providerFocus === providerType.category ? 'provider-type-card--focused' : ''}`} key={providerType.category}>
+                      <header><span><providerType.icon size={17} /></span></header>
+                      <h3>{providerType.label}</h3>
+                      <strong>{providerType.tagline}</strong>
+                      <p>{providerType.examples}</p>
+                      <dl><div><dt>Providers</dt><dd>{providers.map(provider => provider.name).join(' · ') || 'None connected'}</dd></div></dl>
+                    </article>
+                  )
+                })}
+              </div>
+
+              <SectionHeading eyebrow="Available providers" title="What you can connect" />
+              <div className="provider-catalog-grid">
+                {data.providers.map(provider => (
+                  <button className="provider-catalog-card" key={provider.id} onClick={() => setSelectedProviderId(provider.id)}>
+                    <ProviderLogo provider={provider.id} label={provider.name} />
+                    <span><strong>{provider.name}</strong><small>{provider.category === 'Bridge' ? 'Money route' : provider.category}</small><code>{provider.capabilities.join(' · ') || 'Route capabilities'}</code></span>
+                    <Pill tone={provider.status !== 'disconnected' ? 'positive' : 'neutral'}>{provider.status !== 'disconnected' ? provider.detail : 'Explore'}</Pill>
+                    <ArrowRight size={15} />
+                  </button>
+                ))}
+              </div>
+
+              <div className="provider-overlap-note">
+                <Code2 size={18} />
+                <div>
+                  <strong>Want to add a financial provider that isn't listed?</strong>
+                  <p>Mandate speaks to any rail through the Provider SDK. Build a Mandate provider to plug a new fintech product into the receive, hold, spend, or money-route layer.</p>
+                </div>
+                <button className="secondary-button" onClick={() => (onBuildProvider ?? (() => notify('The Provider SDK lives in packages/provider-sdk.')))()}>Build a Mandate provider <ExternalLink size={13} /></button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

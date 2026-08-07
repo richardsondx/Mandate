@@ -20,6 +20,10 @@ export const TOOL_GUIDANCE = {
     "capability": "transactions",
     "description": "List normalized account transactions and their ledger evidence. Use when The user wants historical or recent account activity. Do not use when The user only wants current positions; use balance instead."
   },
+  "get_liquidity_status": {
+    "capability": "liquidity_status",
+    "description": "Report earned, spendable, fundable, and pending settlement across the spend route. Use when The agent needs a single account-level view of spendable, fundable, and pending capital before deciding to spend or fund. Do not use when The agent only wants per-provider positions; use balance instead."
+  },
   "create_payment_session": {
     "capability": "pay",
     "description": "Create controlled purchasing power for a merchant payment. Use when Money should go from this economic account to a merchant. Do not use when Another party is paying this account; use checkout, invoice, or receive."
@@ -36,10 +40,18 @@ export const TOOL_GUIDANCE = {
     "capability": "transfer",
     "description": "Move an asset from treasury to a specified destination. Use when Existing capital should move to an explicit external destination. Do not use when The destination is a merchant checkout needing a controlled card session; use pay."
   },
+  "fund_spend": {
+    "capability": "fund_spend",
+    "description": "Turn settled earned capital into spendable purchasing power. Use when The agent needs a target amount of spendable money and settled capital exists to fund it. Do not use when The agent wants to send capital to an explicit external destination; use transfer."
+  },
+  "get_funding_movement": {
+    "capability": "fund_spend",
+    "description": "Turn settled earned capital into spendable purchasing power. Use when The agent needs a target amount of spendable money and settled capital exists to fund it. Do not use when The agent wants to send capital to an explicit external destination; use transfer."
+  },
   "refund_transaction": {
     "capability": "refund",
     "description": "Refund a settled revenue transaction. Use when A settled incoming customer payment should be reversed. Do not use when The account is sending a new transfer unrelated to a customer payment."
   }
 } as const;
 
-export type EconomicCapability = "checkout" | "invoice" | "receive" | "balance" | "transactions" | "pay" | "transfer" | "refund";
+export type EconomicCapability = "checkout" | "invoice" | "receive" | "balance" | "transactions" | "liquidity_status" | "pay" | "transfer" | "fund_spend" | "refund";

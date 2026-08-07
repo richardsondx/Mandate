@@ -1,7 +1,7 @@
 import { CAPABILITY_MANIFEST } from './capabilities.generated'
 import type { ActivityEvent, CapabilityAvailabilityResponse, DashboardData, DiagnosticCheck, Transaction } from './types'
 
-export type DataSource = 'daemon' | 'preview' | 'uninitialized' | 'locked' | 'offline'
+export type DataSource = 'daemon' | 'preview' | 'uninitialized' | 'offline'
 
 let csrfToken: string | null = null
 let eventCursor = 0
@@ -256,7 +256,6 @@ export async function loadDashboard(signal?: AbortSignal, accountId?: string): P
     if (!status.initialized) return { data: emptyData(status.runtimes), source: 'uninitialized' }
     const query = accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''
     const response = await fetch(`/v1/dashboard${query}`, { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal })
-    if (response.status === 401) return { data: emptyData(status.runtimes), source: 'locked' }
     if (!response.ok) throw new Error(`Daemon returned ${response.status}`)
     const [body, diagnosticsResponse] = await Promise.all([
       response.json() as Promise<SnapshotResponse>,

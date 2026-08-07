@@ -32,7 +32,7 @@ that must work from a clean Mac through a repeatable economic operation.
 - [x] Edit agent authority and capability grants from the dashboard.
 - [x] Open a persistent account setup/readiness checklist.
 - [x] See daemon-measured System diagnostics without false readiness claims.
-- [x] Install and probe Hermes MCP configuration entirely from the dashboard; verified against an isolated Hermes home with 10 canonical tools and a scoped balance call.
+- [x] Install and probe Hermes MCP configuration entirely from the dashboard; verified against an isolated Hermes home with 13 canonical tools and a scoped balance call.
 - [~] Install and probe OpenClaw from the dashboard. The supported CLI path is implemented, but OpenClaw is not installed on the reference Mac for acceptance.
 
 ## External-provider acceptance

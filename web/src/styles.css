@@ -573,6 +573,11 @@ h3 { font-size: .98rem; font-weight: 600; letter-spacing: -.015em; }
 .detected-summary { padding: 9px 3px 0; color: #9db3a8; font: .61rem 'Geist Mono', monospace; }
 .onboarding-error { max-width: 650px; margin: 14px auto 0; }
 .setup-command { margin: 14px 0 16px; padding: 13px; overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); color: var(--ink); font: .68rem/1.5 'Geist Mono', monospace; }
+.setup-command-wrap { position: relative; margin: 14px 0 16px; }
+.setup-command-wrap .setup-command { margin: 0; }
+.setup-copy { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: .64rem; font-weight: 590; cursor: pointer; }
+.setup-copy:hover { border-color: var(--green); color: var(--green); background: var(--green-pale); }
+.setup-copy span { line-height: 1; }
 .access-gate .onboarding-copy .secondary-button { align-self: flex-start; }
 
 .modal-layer { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 22px; background: rgba(13,17,14,.55); backdrop-filter: blur(6px); animation: modalFade 160ms var(--ease); }
@@ -1586,6 +1591,22 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   padding-top: 14px;
   border-top: 1px solid var(--line-soft);
 }
+
+.provider-spec-card > .text-action { margin-bottom: 6px; }
+.provider-spec-card .spec-section ul { list-style: none; padding-left: 0; margin: 0; }
+.provider-spec-card .spec-section ul li { display: flex; align-items: flex-start; gap: 8px; }
+.provider-spec-card .spec-section ul li > svg { flex: 0 0 auto; margin-top: 2px; color: var(--muted); }
+.provider-spec-card .spec-section ul li > .spec-check { color: var(--green); }
+.spec-dot { flex: 0 0 auto; width: 5px; height: 5px; margin-top: 8px; border-radius: 50%; background: var(--muted); }
+
+.build-provider-contract { margin: 14px 0 18px; border-top: 1px solid var(--line-soft); }
+.build-provider-contract > div { display: grid; grid-template-columns: minmax(0, 220px) 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.build-provider-contract dt { margin: 0; }
+.build-provider-contract dt code { font: .66rem/1.5 'Geist Mono', monospace; color: var(--green); }
+.build-provider-contract dd { margin: 0; font-size: .74rem; color: var(--muted); line-height: 1.45; }
+.build-provider-steps { padding-left: 0; list-style: none; margin: 0 0 18px; }
+.build-provider-steps li { display: flex; align-items: flex-start; gap: 8px; font-size: .76rem; color: var(--muted); margin-bottom: 6px; line-height: 1.45; }
+.build-provider-steps li strong { color: var(--foreground); }
 
 .capability-heading-actions { display: flex; align-items: center; gap: 10px; }
 

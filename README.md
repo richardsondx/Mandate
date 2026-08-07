@@ -2,6 +2,12 @@
 
 **One account. Many rails.**
 
+<p align="center">
+  <a href="video/out/mandate-demo.mp4" title="Watch the Mandate demo">
+    <img src="video/out/mandate-demo-cover.png" alt="Mandate demo — a prompt in ChatGPT, the execution graph behind it, and the dashboard walking through every page" width="920">
+  </a>
+</p>
+
 Mandate is a macOS-first, local economic operating system for autonomous agents.
 It gives CLI-native and tool-native agents one stable account interface while
 keeping provider positions, permissions, and accounting explicit.
@@ -41,6 +47,37 @@ Requirements:
 - Xcode Command Line Tools
 - Node.js 22 or newer and pnpm 10
 - Rust stable (installed by the bootstrap script when missing)
+
+### One command from a fresh clone
+
+After cloning, run the launcher. It installs nothing system-wide, builds the
+daemon and dashboard the first time, starts `mandated`, and opens the console.
+
+```bash
+./scripts/start.sh
+```
+
+The dashboard opens at `http://127.0.0.1:7741/`. Stop the daemon with Ctrl-C.
+
+### Install the desktop app from a release
+
+Download the `Mandate-<version>.dmg` from the [latest release](https://github.com/richardsondx/Mandate/releases) and open it. Either drag **Mandate** into Applications, or just double-click **Mandate** right inside the disk image — it installs itself to `/Applications` and launches. Mandate runs as a menu-bar app (an icon in the menu bar, no Dock icon) that keeps the local daemon running and opens the dashboard in a native window.
+
+Or install from the command line (optionally with a background LaunchAgent so the daemon starts on login):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/richardsondx/Mandate/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/richardsondx/Mandate/main/scripts/install.sh | sh -s -- --launch-agent
+```
+
+### Build the app and disk image yourself
+
+```bash
+./scripts/build-app.sh   # produces dist/Mandate.app
+./scripts/build-dmg.sh   # produces dist/Mandate-<version>.dmg
+```
+
+### From source (manual)
 
 Install the build dependencies on macOS:
 
@@ -204,6 +241,19 @@ pnpm --dir packages/mcp start
 
 See `integrations/openclaw` and `integrations/hermes` for runtime-specific
 assets. Agent credentials are scoped and are never administrator credentials.
+
+## Demo video
+
+The README preview is a Remotion composition in `video/`. It walks from a
+natural prompt in ChatGPT, through the Mandate execution graph, into a
+page-by-page tour of the dashboard, and closes with why Mandate is more than a
+payment rail or a wallet. Rebuild it from the repository:
+
+```bash
+pnpm --dir video install
+pnpm --dir video render          # out/mandate-demo.mp4
+pnpm --dir video render:still   # out/mandate-demo-cover.png
+```
 
 ## Repository map
 

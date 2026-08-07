@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16322a"/>
+      <stop offset="1" stop-color="#0c1d16"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#1d4034" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#0c1d16" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="720" height="460" fill="url(#bg)"/>
+  <rect width="720" height="460" fill="url(#vignette)"/>
+  <g transform="translate(310 196) scale(4)" fill="#7fe0bb" opacity="0.06">
+    <rect x="4"  y="4.5" width="3" height="16" rx="1.5" transform="rotate(-25 5.5 20.5)"/>
+    <rect x="11" y="7"   width="3" height="11" rx="1.5" transform="translate(0 3) rotate(35 12.5 18)"/>
+    <rect x="18" y="4.5" width="3" height="16" rx="1.5" transform="rotate(25 19.5 20.5)"/>
+  </g>
+  <g opacity="0.92">
+    <line x1="232" y1="245" x2="488" y2="245" stroke="#7fe0bb" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="490,245 476,239 476,251" fill="#7fe0bb"/>
+  </g>
+  <text x="360" y="198" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="20" font-weight="500" fill="#cfe9dd" letter-spacing="0.4">Drag Mandate to Applications</text>
+</svg>

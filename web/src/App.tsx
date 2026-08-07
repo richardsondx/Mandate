@@ -41,7 +41,7 @@ import { fixtureActivityEvents, fixtureData } from './lib/fixtures'
 import type { SandboxSimulationEvent } from './lib/sandbox'
 import type { ActivityEvent, Agent, DashboardData, EconomicAccount, EnvironmentMode, GuideTabId, LiquidityConfig, NavId, Position, Provider, Transaction } from './lib/types'
 import { ArrowAction, FlowLine, LogoMark, Pill, ProviderLogo, RowAction, SectionHeading, formatAtomic } from './components/ui'
-import { AccountDialog, AccountingDialog, AgentDialog, CommandDialog, LedgerDialog, LiquidityConfigDialog, OperationDialog, ProviderDialog, SandboxSimulatorDialog, SetupChecklistDialog, TestAgentDialog, type ProviderCategory } from './components/dialogs'
+import { AccountDialog, AccountingDialog, AgentDialog, BuildProviderDialog, CommandDialog, LedgerDialog, LiquidityConfigDialog, OperationDialog, ProviderDialog, SandboxSimulatorDialog, SetupChecklistDialog, TestAgentDialog, type ProviderCategory } from './components/dialogs'
 import { Guide, getAccountTopology } from './components/Guide'
 
 const NAV: { id: NavId; label: string; icon: typeof Gauge }[] = [
@@ -597,7 +597,7 @@ function ProviderCard({ provider, configure }: { provider: Provider; configure: 
   )
 }
 
-function Capabilities({ data, configure, addProvider, exploreProviders }: { data: DashboardData; configure: (provider: Provider) => void; addProvider: (category?: ProviderCategory) => void; exploreProviders: (category?: ProviderCategory) => void }) {
+function Capabilities({ data, configure, addProvider, exploreProviders, closeLoop }: { data: DashboardData; configure: (provider: Provider) => void; addProvider: (category?: ProviderCategory) => void; exploreProviders: (category?: ProviderCategory) => void; closeLoop: () => void }) {
   const connected = data.providers.filter(provider => provider.category !== 'Bridge' && provider.status !== 'disconnected').length
   const topology = getAccountTopology(data)
   return (
@@ -614,7 +614,7 @@ function Capabilities({ data, configure, addProvider, exploreProviders }: { data
             <h3>Your capabilities are connected, but your money can't flow between all of them yet.</h3>
             <p>{topology.missingRoutesCount} {topology.missingRoutesCount === 1 ? 'route needs' : 'routes need'} setup for a closed economic loop.</p>
           </div>
-          <button className="primary-button" onClick={() => exploreProviders()}>
+          <button className="primary-button" onClick={() => closeLoop()}>
             Close the loop <ArrowRight size={14} />
           </button>
         </section>
@@ -643,7 +643,7 @@ function Capabilities({ data, configure, addProvider, exploreProviders }: { data
           </p>
         </div>
         {!topology.isClosed && (
-          <button className="secondary-button" onClick={() => exploreProviders()}>
+          <button className="secondary-button" onClick={() => closeLoop()}>
             Close the loop <ArrowRight size={13} />
           </button>
         )}
@@ -796,8 +796,17 @@ function FirstRun({ detected, onInitialized, onPreview }: { detected: { openclaw
   return <div className="onboarding"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="neutral">First-time setup</Pill></header><main><div className="onboarding-progress" aria-label={`Setup step ${step + 1} of ${ONBOARDING_STEPS.length}`}>{ONBOARDING_STEPS.map((name, index) => <div key={name} className={index <= step ? 'complete' : ''}><span>{index < step ? <Check size={11} /> : index + 1}</span><small>{name}</small></div>)}</div><section className="onboarding-card page-enter" key={step}><div className="onboarding-copy"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{body}</p>{step === 0 && <div className="local-note"><ShieldCheck size={16} /><span><strong>Local-first.</strong> Your encrypted ledger and agent policy remain on this Mac.</span></div>}</div><div className="onboarding-visual">{visuals[step]}</div></section>{error && <p className="form-error onboarding-error" role="alert">{error}</p>}<footer><button className="secondary-button" onClick={() => step === 0 ? onPreview() : setStep(step - 1)}>{step === 0 ? 'View demo first' : 'Back'}</button><span>Step {step + 1} of {ONBOARDING_STEPS.length}</span><button className="primary-button" disabled={!canContinue || busy} onClick={() => step === ONBOARDING_STEPS.length - 1 ? submit() : setStep(step + 1)}>{busy ? 'Creating…' : step === ONBOARDING_STEPS.length - 1 ? 'Create Mandate' : 'Continue'} <ArrowRight size={15} /></button></footer></main></div>
 }
 
-function AccessGate({ onPreview }: { onPreview: () => void }) {
-  return <div className="onboarding access-gate"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="warning">Sign-in required</Pill></header><main><section className="onboarding-card"><div className="onboarding-copy"><p className="eyebrow">Local dashboard</p><h1>This tab isn’t signed in.</h1><p>Mandate is running on this Mac, but a direct visit to the local address does not include dashboard access. Open a signed-in tab from Terminal:</p><pre className="setup-command">cargo run -p mandate -- dashboard</pre><button className="secondary-button" onClick={onPreview}>View demo preview instead</button></div><div className="onboarding-visual"><div className="security-visual"><span className="security-ring security-ring-1" /><span className="security-ring security-ring-2" /><KeyRound size={42} /><small>Your local data stays locked until you sign in</small></div></div></section></main></div>
+function CopyCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => navigator.clipboard.writeText(command).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500) })
+  return (
+    <div className="setup-command-wrap">
+      <pre className="setup-command">{command}</pre>
+      <button className="setup-copy" type="button" onClick={copy} aria-label="Copy command to clipboard">
+        {copied ? <Check size={14} /> : <Copy size={14} />}<span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+    </div>
+  )
 }
 
 function positionMatchesEvent(position: Position, event: SandboxSimulationEvent): boolean {
@@ -918,6 +927,7 @@ export function App() {
     | { type: 'sandbox_simulator' }
     | { type: 'account' }
     | { type: 'setup' }
+    | { type: 'build_provider' }
     | null
   >(null)
 
@@ -985,8 +995,7 @@ export function App() {
 
   if (loading) return <div className="app-loading"><LogoMark /><span>Opening Mandate…</span></div>
   if (source === 'uninitialized') return <FirstRun detected={scopedData.detectedRuntimes} onInitialized={returnToRealState} onPreview={preview} />
-  if (source === 'locked') return <AccessGate onPreview={preview} />
-  if (source === 'offline') return <div className="onboarding access-gate"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="danger">Daemon offline</Pill></header><main><section className="onboarding-card"><div className="onboarding-copy"><p className="eyebrow">Local runtime unavailable</p><h1>Start Mandate to continue.</h1><p>The dashboard could not reach the local daemon. No preview or sample financial data has been substituted.</p><pre className="setup-command">cargo run -p mandated</pre><button className="secondary-button" onClick={() => setRefreshVersion(version => version + 1)}>Try again</button><button className="secondary-button" onClick={preview}>View explicit demo preview</button></div><div className="onboarding-visual"><div className="security-visual"><Server size={42} /><small>Waiting for 127.0.0.1:7741</small></div></div></section></main></div>
+  if (source === 'offline') return <div className="onboarding access-gate"><header><div className="brand"><LogoMark /><span>Mandate</span></div><Pill tone="danger">Daemon offline</Pill></header><main><section className="onboarding-card"><div className="onboarding-copy"><p className="eyebrow">Local runtime unavailable</p><h1>Start Mandate to continue.</h1><p>The dashboard could not reach the local daemon. No preview or sample financial data has been substituted.</p><CopyCommand command="cargo run -p mandated" /><button className="secondary-button" onClick={() => setRefreshVersion(version => version + 1)}>Try again</button><button className="secondary-button" onClick={preview}>View explicit demo preview</button></div><div className="onboarding-visual"><div className="security-visual"><Server size={42} /><small>Waiting for 127.0.0.1:7741</small></div></div></section></main></div>
 
   return (
     <Shell page={page} onNavigate={navigate} source={source} environment={environment} onSelectEnvironment={selectEnvironment} data={scopedData} openSetup={source === 'preview' ? returnToRealState : () => setDialog({ type: 'setup' })} openCommand={() => setDialog({ type: 'command' })} openSimulator={() => setDialog({ type: 'sandbox_simulator' })} selectAccount={selectAccount} createAccount={() => setDialog({ type: 'account' })}>
@@ -994,8 +1003,8 @@ export function App() {
       {page === 'account' && <Account data={scopedData} explainAccounting={() => setDialog({ type: 'accounting' })} reconcile={() => { setRefreshVersion(version => version + 1); setToast('Ledger snapshot refreshed') }} liquidity={liquidity} onConfigureLiquidity={() => setDialog({ type: 'liquidity' })} onManualTransfer={() => setDialog({ type: 'operation', kind: 'transfer' })} onFund={() => setDialog({ type: 'operation', kind: 'receive' })} navigate={navigate} />}
       {page === 'activity' && <Activity data={scopedData} events={activityEvents} source={source} viewLedger={transaction => setDialog({ type: 'ledger', transaction })} />}
       {page === 'agents' && <Agents data={scopedData} connect={() => setDialog({ type: 'agent' })} manage={agent => setDialog({ type: 'agent', agent })} testConnection={agent => setDialog({ type: 'test_agent', agent })} reviewDetected={() => setDialog({ type: 'agent', runtime: scopedData.detectedRuntimes.hermes && !scopedData.detectedRuntimes.openclaw ? 'hermes' : 'openclaw' })} />}
-      {page === 'capabilities' && <Capabilities data={scopedData} configure={provider => setDialog({ type: 'provider', provider })} addProvider={category => setDialog({ type: 'provider', category })} exploreProviders={category => openGuide('setup', category)} />}
-      {page === 'guide' && <Guide data={scopedData} events={activityEvents} navigate={navigate} initialTab={guideEntry.tab} providerFocus={guideEntry.providerFocus} onOpenProvider={providerId => setDialog({ type: 'provider', provider: scopedData.providers.find(p => p.id === providerId) })} notify={setToast} />}
+      {page === 'capabilities' && <Capabilities data={scopedData} configure={provider => setDialog({ type: 'provider', provider })} addProvider={category => setDialog({ type: 'provider', category })} exploreProviders={category => openGuide('providers', category)} closeLoop={() => openGuide('setup')} />}
+      {page === 'guide' && <Guide data={scopedData} events={activityEvents} navigate={navigate} initialTab={guideEntry.tab} providerFocus={guideEntry.providerFocus} onOpenProvider={providerId => setDialog({ type: 'provider', provider: scopedData.providers.find(p => p.id === providerId) })} onBuildProvider={() => setDialog({ type: 'build_provider' })} notify={setToast} />}
       {page === 'system' && <System data={scopedData} source={source} notify={setToast} refresh={() => setRefreshVersion(version => version + 1)} navigate={navigate} />}
 
       {toast && <div className="toast" role="status"><Check size={15} />{toast}</div>}
@@ -1010,6 +1019,7 @@ export function App() {
       {dialog?.type === 'sandbox_simulator' && <SandboxSimulatorDialog onClose={() => setDialog(null)} onSimulate={(event) => simulateSandboxEvent(event)} />}
       {dialog?.type === 'account' && <AccountDialog onClose={() => setDialog(null)} onComplete={accountCreated} />}
       {dialog?.type === 'setup' && <SetupChecklistDialog providers={scopedData.providers} agents={scopedData.agents} onClose={() => setDialog(null)} navigate={navigate} />}
+      {dialog?.type === 'build_provider' && <BuildProviderDialog onClose={() => setDialog(null)} />}
 
     </Shell>
   )

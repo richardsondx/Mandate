@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS journal_transactions(id TEXT PRIMARY KEY, account_id 
 CREATE TABLE IF NOT EXISTS journal_entries(id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_id TEXT NOT NULL REFERENCES journal_transactions(id), ledger_account TEXT NOT NULL, amount_atomic TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS provider_events(provider TEXT NOT NULL, external_event_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(provider, external_event_id));
 CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS funding_movements(id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES economic_accounts(id), idempotency_key TEXT NOT NULL, record TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(account_id,idempotency_key));
 INSERT OR IGNORE INTO provider_connections(id,account_id,provider_id,mode,status,created_at)
 SELECT 'pcon_coinbase_' || account_id,account_id,'coinbase-cdp-wallet','demo','connected',MIN(reconciled_at) FROM positions WHERE provider='fake-treasury' GROUP BY account_id;
 INSERT OR IGNORE INTO provider_connections(id,account_id,provider_id,mode,status,created_at)
@@ -714,6 +715,478 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         })
     }
 
+    fn catalog_provider_id(provider: &str) -> &str {
+        match provider {
+            "fake-revenue" => "stripe-revenue",
+            "fake-treasury" => "coinbase-cdp-wallet",
+            "fake-card" => "lithic-card",
+            "fake-bridge" => "bridge-rail",
+            other => other,
+        }
+    }
+
+    fn provider_category(provider: &str) -> Option<&'static str> {
+        match Self::catalog_provider_id(provider) {
+            "stripe-revenue" => Some("Receive"),
+            "coinbase-cdp-wallet" => Some("Hold"),
+            "lithic-card" => Some("Spend"),
+            "bridge-rail" => Some("Bridge"),
+            _ => None,
+        }
+    }
+
+    fn convert_decimals(value: i128, from: u8, to: u8) -> Result<i128, ApiError> {
+        if from == to {
+            return Ok(value);
+        }
+        if from < to {
+            return value
+                .checked_mul(10_i128.pow((to - from).into()))
+                .ok_or_else(|| ApiError::invalid("amount is too large"));
+        }
+        Ok(value / 10_i128.pow((from - to).into()))
+    }
+
+    fn liquidity_source<'a>(
+        positions: &'a [Position],
+        currency: &str,
+        target_decimals: u8,
+    ) -> Option<(&'a Position, i128)> {
+        positions
+            .iter()
+            .filter(|position| {
+                matches!(
+                    Self::provider_category(&position.provider),
+                    Some("Receive" | "Hold")
+                ) && (position.asset.eq_ignore_ascii_case(currency)
+                    || (currency == "USD" && position.asset.eq_ignore_ascii_case("USDC")))
+            })
+            .filter_map(|position| {
+                Self::convert_decimals(
+                    position.available.as_i128(),
+                    position.decimals,
+                    target_decimals,
+                )
+                .ok()
+                .map(|available| (position, available))
+            })
+            .max_by_key(|(position, available)| {
+                (
+                    *available,
+                    matches!(Self::provider_category(&position.provider), Some("Receive")),
+                )
+            })
+    }
+
+    pub fn liquidity_status(
+        &self,
+        account_id: &str,
+        currency: &str,
+    ) -> Result<LiquidityStatusResponse, ApiError> {
+        let currency = currency.trim().to_uppercase();
+        if currency.is_empty() {
+            return Err(ApiError::invalid("currency is required"));
+        }
+        let balance = self.balance(account_id)?;
+        let providers = self.providers_for(account_id);
+        let connected = |id: &str| {
+            providers.iter().any(|provider| {
+                provider.id == id
+                    && matches!(provider.state.as_str(), "sandbox" | "live_ready" | "live")
+            })
+        };
+        let spend_positions: Vec<&Position> = balance
+            .positions
+            .iter()
+            .filter(|position| {
+                matches!(Self::provider_category(&position.provider), Some("Spend"))
+                    && position.asset.eq_ignore_ascii_case(&currency)
+            })
+            .collect();
+        let decimals = spend_positions
+            .first()
+            .map(|position| position.decimals)
+            .or_else(|| {
+                balance
+                    .positions
+                    .iter()
+                    .find(|position| position.asset.eq_ignore_ascii_case(&currency))
+                    .map(|position| position.decimals)
+            })
+            .unwrap_or(2);
+        let sum = |values: Vec<i128>| -> Result<AtomicAmount, ApiError> {
+            AtomicAmount::new(
+                values
+                    .into_iter()
+                    .try_fold(0_i128, |total, value| total.checked_add(value))
+                    .ok_or_else(|| ApiError::invalid("liquidity total is too large"))?
+                    .to_string(),
+            )
+        };
+        let normalized = |position: &Position, value: i128| {
+            Self::convert_decimals(value, position.decimals, decimals)
+        };
+        let earned_settled = sum(balance
+            .positions
+            .iter()
+            .filter(|position| {
+                matches!(Self::provider_category(&position.provider), Some("Receive"))
+                    && position.asset.eq_ignore_ascii_case(&currency)
+            })
+            .map(|position| normalized(position, position.settled.as_i128()))
+            .collect::<Result<Vec<_>, _>>()?)?;
+        let pending_settlement = sum(balance
+            .positions
+            .iter()
+            .filter(|position| {
+                matches!(Self::provider_category(&position.provider), Some("Receive"))
+                    && position.asset.eq_ignore_ascii_case(&currency)
+            })
+            .map(|position| normalized(position, position.pending.as_i128()))
+            .collect::<Result<Vec<_>, _>>()?)?;
+        let spendable_now = sum(spend_positions
+            .iter()
+            .map(|position| normalized(position, position.available.as_i128()))
+            .collect::<Result<Vec<_>, _>>()?)?;
+        let source = Self::liquidity_source(&balance.positions, &currency, decimals);
+        let source_provider =
+            source.map(|(position, _)| Self::catalog_provider_id(&position.provider).to_string());
+        let destination_provider = spend_positions
+            .first()
+            .map(|position| Self::catalog_provider_id(&position.provider).to_string());
+        let bridge_ready = connected("bridge-rail");
+        let route_ready =
+            source_provider.is_some() && destination_provider.is_some() && bridge_ready;
+        let unavailable_reason = if destination_provider.is_none() {
+            Some(format!("No connected Spend provider accepts {currency}."))
+        } else if source_provider.is_none() {
+            Some(format!(
+                "No settled Receive or Hold position can fund {currency} spending."
+            ))
+        } else if !bridge_ready {
+            Some("Connect a Bridge provider to make capital spendable.".into())
+        } else {
+            None
+        };
+        let available_to_fund = AtomicAmount::new(
+            if route_ready {
+                source.map(|(_, available)| available).unwrap_or(0)
+            } else {
+                0
+            }
+            .to_string(),
+        )?;
+        Ok(LiquidityStatusResponse {
+            account_id: account_id.into(),
+            currency,
+            decimals,
+            earned_settled,
+            spendable_now,
+            available_to_fund,
+            pending_settlement,
+            spend_route: LiquidityRoute {
+                source_provider,
+                destination_provider,
+                via: if bridge_ready {
+                    vec!["bridge-rail".into()]
+                } else {
+                    Default::default()
+                },
+                status: if route_ready { "ready" } else { "unavailable" }.into(),
+                estimated_duration_seconds: route_ready.then_some(300),
+                unavailable_reason,
+            },
+            estimated_at: Utc::now(),
+        })
+    }
+
+    pub fn fund_spend(&self, req: FundSpendRequest) -> Result<FundingMovement, ApiError> {
+        let account_id = req.money.account_id.clone();
+        let currency = req.money.currency.trim().to_uppercase();
+        let target = req.money.amount.as_i128();
+        if target == 0 {
+            return Err(ApiError::invalid(
+                "target spendable amount must be greater than zero",
+            ));
+        }
+        let idempotency_key = req
+            .money
+            .idempotency_key
+            .clone()
+            .unwrap_or_else(|| format!("idem_{}", Uuid::new_v4().simple()));
+        if let Some(record) = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT record FROM funding_movements WHERE account_id=?1 AND idempotency_key=?2",
+                params![account_id, idempotency_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(db_err)?
+        {
+            return serde_json::from_str(&record)
+                .map_err(|error| ApiError::internal(error.to_string()));
+        }
+
+        let liquidity = self.liquidity_status(&account_id, &currency)?;
+        let spendable_before = liquidity.spendable_now.as_i128();
+        let funding_required = target.saturating_sub(spendable_before).max(0);
+        let now = Utc::now();
+        let mut record = FundingMovement {
+            id: format!("mov_{}", Uuid::new_v4().simple()),
+            account_id: account_id.clone(),
+            currency: currency.clone(),
+            target_spendable: req.money.amount,
+            spendable_before: liquidity.spendable_now.clone(),
+            funding_amount: AtomicAmount::new(funding_required.to_string())?,
+            spendable_after: (funding_required == 0)
+                .then(|| AtomicAmount::new(spendable_before.to_string()))
+                .transpose()?,
+            source_provider: liquidity.spend_route.source_provider.clone(),
+            destination_provider: liquidity.spend_route.destination_provider.clone(),
+            route: {
+                let mut route = Vec::new();
+                if let Some(source) = &liquidity.spend_route.source_provider {
+                    route.push(source.clone());
+                }
+                route.extend(liquidity.spend_route.via.clone());
+                if let Some(destination) = &liquidity.spend_route.destination_provider {
+                    route.push(destination.clone());
+                }
+                route
+            },
+            state: MovementState::Settled,
+            expected_arrival: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let balance = self.balance(&account_id)?;
+        let destination = balance
+            .positions
+            .iter()
+            .find(|position| {
+                matches!(Self::provider_category(&position.provider), Some("Spend"))
+                    && position.asset.eq_ignore_ascii_case(&currency)
+            })
+            .ok_or_else(|| {
+                ApiError::new(
+                    "capability_unavailable",
+                    format!("No connected Spend provider accepts {currency}."),
+                    false,
+                )
+            })?;
+
+        if funding_required > 0 {
+            if liquidity.spend_route.status != "ready" {
+                return Err(ApiError::new(
+                    "capability_unavailable",
+                    liquidity
+                        .spend_route
+                        .unavailable_reason
+                        .unwrap_or_else(|| "No executable spend funding route.".into()),
+                    false,
+                ));
+            }
+            let source = balance
+                .positions
+                .iter()
+                .filter(|position| {
+                    matches!(
+                        Self::provider_category(&position.provider),
+                        Some("Receive" | "Hold")
+                    ) && (position.asset.eq_ignore_ascii_case(&currency)
+                        || (currency == "USD" && position.asset.eq_ignore_ascii_case("USDC")))
+                })
+                .filter_map(|position| {
+                    Self::convert_decimals(
+                        position.available.as_i128(),
+                        position.decimals,
+                        liquidity.decimals,
+                    )
+                    .ok()
+                    .filter(|available| *available >= funding_required)
+                    .map(|_| position)
+                })
+                .min_by_key(|position| {
+                    !matches!(Self::provider_category(&position.provider), Some("Receive"))
+                })
+                .ok_or_else(|| {
+                    ApiError::new(
+                        "insufficient_funds",
+                        "settled capital cannot cover the requested spendable target",
+                        false,
+                    )
+                })?;
+            record.source_provider = Some(Self::catalog_provider_id(&source.provider).to_string());
+            record.route = vec![
+                Self::catalog_provider_id(&source.provider).into(),
+                "bridge-rail".into(),
+                Self::catalog_provider_id(&destination.provider).into(),
+            ];
+            let providers = self.providers_for(&account_id);
+            for provider_id in record.route.iter() {
+                let mode = providers
+                    .iter()
+                    .find(|provider| &provider.id == provider_id)
+                    .map(|provider| provider.mode.as_str())
+                    .unwrap_or("none");
+                if mode != "demo" {
+                    return Err(ApiError::new(
+                        "provider_dispatch_unavailable",
+                        "fund_spend execution is currently enabled only for deterministic demo routes",
+                        false,
+                    ));
+                }
+            }
+            let source_amount =
+                Self::convert_decimals(funding_required, liquidity.decimals, source.decimals)?;
+            let mut conn = self.db.lock().unwrap();
+            let tx = conn.transaction().map_err(db_err)?;
+            let (source_available, source_settled): (String, String) = tx
+                .query_row(
+                    "SELECT available,settled FROM positions WHERE account_id=?1 AND provider=?2 AND asset=?3",
+                    params![account_id, source.provider, source.asset],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(db_err)?;
+            let source_available: i128 = source_available
+                .parse()
+                .map_err(|error: std::num::ParseIntError| ApiError::internal(error.to_string()))?;
+            let source_settled: i128 = source_settled
+                .parse()
+                .map_err(|error: std::num::ParseIntError| ApiError::internal(error.to_string()))?;
+            if source_available < source_amount || source_settled < source_amount {
+                return Err(ApiError::new(
+                    "insufficient_funds",
+                    "settled source position changed before funding could execute",
+                    false,
+                ));
+            }
+            let (spend_available, spend_settled): (String, String) = tx
+                .query_row(
+                    "SELECT available,settled FROM positions WHERE account_id=?1 AND provider=?2 AND asset=?3",
+                    params![account_id, destination.provider, destination.asset],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(db_err)?;
+            let spend_available: i128 = spend_available
+                .parse()
+                .map_err(|error: std::num::ParseIntError| ApiError::internal(error.to_string()))?;
+            let spend_settled: i128 = spend_settled
+                .parse()
+                .map_err(|error: std::num::ParseIntError| ApiError::internal(error.to_string()))?;
+            tx.execute(
+                "UPDATE positions SET available=?1,settled=?2,reconciled_at=?3 WHERE account_id=?4 AND provider=?5 AND asset=?6",
+                params![
+                    (source_available - source_amount).to_string(),
+                    (source_settled - source_amount).to_string(),
+                    now.to_rfc3339(),
+                    account_id,
+                    source.provider,
+                    source.asset
+                ],
+            )
+            .map_err(db_err)?;
+            tx.execute(
+                "UPDATE positions SET available=?1,settled=?2,reconciled_at=?3 WHERE account_id=?4 AND provider=?5 AND asset=?6",
+                params![
+                    (spend_available + funding_required).to_string(),
+                    (spend_settled + funding_required).to_string(),
+                    now.to_rfc3339(),
+                    account_id,
+                    destination.provider,
+                    destination.asset
+                ],
+            )
+            .map_err(db_err)?;
+            Self::post_journal_tx(
+                &tx,
+                &account_id,
+                Some(&record.id),
+                "Fund spend source",
+                &source.asset,
+                &[
+                    (
+                        format!("asset:{}:{}", source.provider, source.asset),
+                        -source_amount,
+                    ),
+                    (
+                        format!("clearing:fund_spend:{}:{}", record.id, source.asset),
+                        source_amount,
+                    ),
+                ],
+            )?;
+            Self::post_journal_tx(
+                &tx,
+                &account_id,
+                Some(&record.id),
+                "Fund spend destination",
+                &destination.asset,
+                &[
+                    (
+                        format!("asset:{}:{}", destination.provider, destination.asset),
+                        funding_required,
+                    ),
+                    (
+                        format!("clearing:fund_spend:{}:{}", record.id, destination.asset),
+                        -funding_required,
+                    ),
+                ],
+            )?;
+            record.spendable_after = Some(AtomicAmount::new(
+                (spendable_before + funding_required).to_string(),
+            )?);
+            let serialized = serde_json::to_string(&record)
+                .map_err(|error| ApiError::internal(error.to_string()))?;
+            tx.execute(
+                "INSERT INTO funding_movements(id,account_id,idempotency_key,record,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
+                params![record.id, account_id, idempotency_key, serialized, now.to_rfc3339()],
+            )
+            .map_err(db_err)?;
+            Self::event_tx(
+                &tx,
+                "spend.funded",
+                serde_json::json!({"account_id":account_id,"movement_id":record.id,"funding_amount":record.funding_amount,"currency":currency,"route":record.route}),
+            )?;
+            tx.commit().map_err(db_err)?;
+            return Ok(record);
+        }
+
+        let serialized = serde_json::to_string(&record)
+            .map_err(|error| ApiError::internal(error.to_string()))?;
+        let conn = self.db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO funding_movements(id,account_id,idempotency_key,record,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
+            params![record.id, account_id, idempotency_key, serialized, now.to_rfc3339()],
+        )
+        .map_err(db_err)?;
+        Self::event_conn(
+            &conn,
+            "spend.funding_not_needed",
+            serde_json::json!({"account_id":account_id,"movement_id":record.id,"target_spendable":record.target_spendable,"currency":currency}),
+        )?;
+        Ok(record)
+    }
+
+    pub fn funding_movement(&self, id: &str) -> Result<FundingMovement, ApiError> {
+        let record = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT record FROM funding_movements WHERE id=?1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(|| ApiError::not_found("funding movement"))?;
+        serde_json::from_str(&record).map_err(|error| ApiError::internal(error.to_string()))
+    }
+
     fn connected_route(&self, account_id: &str, provider_id: &str) -> Result<String, ApiError> {
         let (catalog_id, route) = match provider_id {
             "coinbase-cdp-wallet" | "fake-treasury" => ("coinbase-cdp-wallet", "fake-treasury"),
@@ -1163,6 +1636,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         }
 
         let manifest = capability_manifest();
+        let provider_definitions = manifest.providers.clone();
         let providers = self.providers_for(account_id);
         let capabilities = manifest
             .capabilities
@@ -1174,8 +1648,19 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                 let provider_ids: Vec<String> = providers
                     .iter()
                     .filter(|provider| {
-                        matches!(provider.state.as_str(), "sandbox" | "live_ready" | "live")
-                            && provider
+                        if !matches!(provider.state.as_str(), "sandbox" | "live_ready" | "live") {
+                            return false;
+                        }
+                        let category_matches = provider_definitions
+                            .iter()
+                            .find(|candidate| candidate.id == provider.id)
+                            .is_some_and(|candidate| {
+                                definition
+                                    .requires_provider_categories
+                                    .contains(&candidate.category)
+                            });
+                        category_matches
+                            || provider
                                 .capabilities
                                 .iter()
                                 .any(|cap| cap == &definition.id)
@@ -1183,7 +1668,18 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                     .map(|provider| provider.id.clone())
                     .collect();
                 let route_required = !definition.requires_provider_categories.is_empty();
-                let route_available = !route_required || !provider_ids.is_empty();
+                let route_available = !route_required
+                    || definition
+                        .requires_provider_categories
+                        .iter()
+                        .all(|required| {
+                            provider_ids.iter().any(|provider_id| {
+                                provider_definitions
+                                    .iter()
+                                    .find(|provider| &provider.id == provider_id)
+                                    .is_some_and(|provider| &provider.category == required)
+                            })
+                        });
                 let environment = providers
                     .iter()
                     .find(|provider| provider_ids.contains(&provider.id))
@@ -1199,7 +1695,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                 } else if !route_available {
                     Some(format!(
                         "Connect a {} provider to make this capability executable.",
-                        definition.requires_provider_categories.join(" or ")
+                        definition.requires_provider_categories.join(" and ")
                     ))
                 } else {
                     None
@@ -1959,5 +2455,183 @@ mod tests {
             .unwrap();
         assert_eq!(event.payload["capability"], "checkout");
         assert_eq!(event.payload["provider"], "fake-revenue");
+    }
+
+    #[test]
+    fn liquidity_status_reports_distinct_spend_and_fund_buckets() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        // Demo seed: lithic USD 100000 (2 dec) spendable, coinbase USDC 100000000 (6 dec),
+        // stripe USD 0 earned. No bridge connected yet.
+        let status = s.liquidity_status(&init.account.id, "USD").unwrap();
+        assert_eq!(status.currency, "USD");
+        assert_eq!(status.decimals, 2);
+        assert_eq!(status.spendable_now.as_str(), "100000");
+        assert_eq!(status.earned_settled.as_str(), "0");
+        assert_eq!(status.pending_settlement.as_str(), "0");
+        // No bridge yet -> route unavailable, nothing reported as fundable.
+        assert_eq!(status.available_to_fund.as_str(), "0");
+        assert_eq!(status.spend_route.status, "unavailable");
+        assert!(status
+            .spend_route
+            .unavailable_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("Bridge"));
+        assert_eq!(
+            status.spend_route.source_provider.as_deref(),
+            Some("coinbase-cdp-wallet")
+        );
+        assert_eq!(
+            status.spend_route.destination_provider.as_deref(),
+            Some("lithic-card")
+        );
+    }
+
+    #[test]
+    fn liquidity_status_reports_fundable_once_bridge_closes_loop() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        s.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        let status = s.liquidity_status(&init.account.id, "USD").unwrap();
+        assert_eq!(status.spend_route.status, "ready");
+        // 100 USDC (6 dec) -> 10000 atomic USD (2 dec).
+        assert_eq!(status.available_to_fund.as_str(), "10000");
+        assert_eq!(status.spend_route.via, vec!["bridge-rail".to_string()]);
+    }
+
+    #[test]
+    fn fund_spend_requires_closed_loop() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        // No bridge connected -> route unavailable.
+        let err = s
+            .fund_spend(FundSpendRequest {
+                money: MoneyRequest {
+                    account_id: init.account.id.clone(),
+                    amount: AtomicAmount::new("200000").unwrap(),
+                    currency: "USD".into(),
+                    provider: None,
+                    idempotency_key: Some("fund-once".into()),
+                    metadata: Default::default(),
+                },
+            })
+            .unwrap_err();
+        assert_eq!(err.code, "capability_unavailable");
+    }
+
+    #[test]
+    fn fund_spend_moves_demo_positions_and_returns_settled() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        s.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        // Spendable starts at 100000 ($1000). Ask for 102500 ($1025) -> fund 2500 ($25)
+        // from the 100 USDC treasury position.
+        let record = s
+            .fund_spend(FundSpendRequest {
+                money: MoneyRequest {
+                    account_id: init.account.id.clone(),
+                    amount: AtomicAmount::new("102500").unwrap(),
+                    currency: "USD".into(),
+                    provider: None,
+                    idempotency_key: Some("fund-once".into()),
+                    metadata: Default::default(),
+                },
+            })
+            .unwrap();
+        assert_eq!(record.state, MovementState::Settled);
+        assert_eq!(record.funding_amount.as_str(), "2500");
+        assert_eq!(record.spendable_after.as_ref().unwrap().as_str(), "102500");
+        assert_eq!(
+            record.source_provider.as_deref(),
+            Some("coinbase-cdp-wallet")
+        );
+        assert_eq!(record.destination_provider.as_deref(), Some("lithic-card"));
+        assert_eq!(
+            record.route,
+            vec![
+                "coinbase-cdp-wallet".to_string(),
+                "bridge-rail".to_string(),
+                "lithic-card".to_string(),
+            ]
+        );
+        let balance = s.balance(&init.account.id).unwrap();
+        let card = balance
+            .positions
+            .iter()
+            .find(|p| p.provider == "fake-card")
+            .unwrap();
+        assert_eq!(card.available.as_str(), "102500");
+        let treasury = balance
+            .positions
+            .iter()
+            .find(|p| p.provider == "fake-treasury")
+            .unwrap();
+        // 100000000 - 25000000 = 75000000 (75 USDC remaining).
+        assert_eq!(treasury.available.as_str(), "75000000");
+        // The funding movement is retrievable by id.
+        let fetched = s.funding_movement(&record.id).unwrap();
+        assert_eq!(fetched.id, record.id);
+    }
+
+    #[test]
+    fn fund_spend_idempotency_returns_same_record_without_double_movement() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        s.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        let request = FundSpendRequest {
+            money: MoneyRequest {
+                account_id: init.account.id.clone(),
+                amount: AtomicAmount::new("102500").unwrap(),
+                currency: "USD".into(),
+                provider: None,
+                idempotency_key: Some("fund-idem".into()),
+                metadata: Default::default(),
+            },
+        };
+        let first = s.fund_spend(request.clone()).unwrap();
+        let second = s.fund_spend(request).unwrap();
+        assert_eq!(first.id, second.id);
+        // Treasury must only be debited once.
+        let balance = s.balance(&init.account.id).unwrap();
+        let treasury = balance
+            .positions
+            .iter()
+            .find(|p| p.provider == "fake-treasury")
+            .unwrap();
+        assert_eq!(treasury.available.as_str(), "75000000");
+    }
+
+    #[test]
+    fn fund_spend_no_op_when_already_spendable() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        s.connect_demo_provider(&init.account.id, "bridge-rail")
+            .unwrap();
+        // Spendable already 100000 ($1000); ask for less -> no movement needed.
+        let record = s
+            .fund_spend(FundSpendRequest {
+                money: MoneyRequest {
+                    account_id: init.account.id.clone(),
+                    amount: AtomicAmount::new("5000").unwrap(),
+                    currency: "USD".into(),
+                    provider: None,
+                    idempotency_key: Some("fund-noop".into()),
+                    metadata: Default::default(),
+                },
+            })
+            .unwrap();
+        assert_eq!(record.state, MovementState::Settled);
+        assert_eq!(record.funding_amount.as_str(), "0");
+        let balance = s.balance(&init.account.id).unwrap();
+        let treasury = balance
+            .positions
+            .iter()
+            .find(|p| p.provider == "fake-treasury")
+            .unwrap();
+        assert_eq!(treasury.available.as_str(), "100000000");
     }
 }
