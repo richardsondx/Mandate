@@ -9,13 +9,48 @@ metadata:
 
 # Mandate economic operations
 
-Use the Mandate CLI for every economic operation. Always pass `--json` and consume the returned JSON rather than terminal prose.
+Use the Mandate CLI for every economic operation. Always pass `--json` and consume returned JSON rather than terminal prose.
 
+- Run `mandate whoami --json` first to discover the scoped economic account, authority, and grant.
+- Run `mandate capabilities --json` when availability is uncertain. Treat it as current account truth; do not infer availability from this skill.
 - Supply a stable `--idempotency-key` for every mutation and reuse it when retrying.
 - Never invoke `mandate admin` or provider-management commands.
 - Never print, persist, summarize, or place temporary card credentials in notes, memory, logs, or messages.
-- Use a payment credential only for its requested checkout and discard it immediately afterward.
 - Treat `available`, `reserved`, `pending`, and `settled` as distinct states.
 - Do not describe value held at one provider as spendable through another rail unless Mandate reports that capability.
+
+## Semantic capability guidance
+
+### checkout
+Use when Money should come from another party into this economic account through a hosted checkout.
+Do not use when The account is paying a merchant; use pay instead.
+
+### invoice
+Use when A named customer should receive a formal invoice and payment terms.
+Do not use when A simple immediate payment link is enough; use checkout instead.
+
+### receive
+Use when Another party needs an address or account endpoint to transfer value directly.
+Do not use when The payer needs a hosted checkout or invoice.
+
+### balance
+Use when The user wants current provider positions or spending availability.
+Do not use when The user wants historical activity; use transactions instead.
+
+### transactions
+Use when The user wants historical or recent account activity.
+Do not use when The user only wants current positions; use balance instead.
+
+### pay
+Use when Money should go from this economic account to a merchant.
+Do not use when Another party is paying this account; use checkout, invoice, or receive.
+
+### transfer
+Use when Existing capital should move to an explicit external destination.
+Do not use when The destination is a merchant checkout needing a controlled card session; use pay.
+
+### refund
+Use when A settled incoming customer payment should be reversed.
+Do not use when The account is sending a new transfer unrelated to a customer payment.
 
 Run `mandate status --json` if the daemon appears unavailable and report the machine-readable error unchanged.

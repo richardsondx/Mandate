@@ -1,4 +1,5 @@
-import type { DashboardData, DiagnosticCheck, Transaction } from './types'
+import { CAPABILITY_MANIFEST } from './capabilities.generated'
+import type { ActivityEvent, CapabilityAvailabilityResponse, DashboardData, DiagnosticCheck, Transaction } from './types'
 
 export type DataSource = 'daemon' | 'preview' | 'uninitialized' | 'locked' | 'offline'
 
@@ -10,8 +11,6 @@ type RuntimeDetection = { openclaw: boolean; hermes: boolean }
 type SnapshotResponse = {
   csrf_token: string | null
   snapshot: {
-    principal: { id: string; name: string }
-    administrator_name: string
     accounts: Array<{ id: string; name: string }>
     account: { id: string; name: string }
     balance: {
@@ -24,6 +23,7 @@ type SnapshotResponse = {
     }
     agents: Array<{ id: string; name: string; runtime: string; authority: 'independent' | 'shared' | 'observe_only'; capabilities: string[]; status: string; created_at: string; installation_status: 'installed' | 'not_installed' | 'runtime_missing' | 'failed'; installation_detail?: string }>
     providers: Array<{ id: string; capabilities: string[]; state: string; mode: string }>
+    capabilities: CapabilityAvailabilityResponse
     outbox_cursor: number
     runtimes: RuntimeDetection
   }
@@ -44,13 +44,65 @@ const PROVIDERS = {
   'coinbase-cdp-wallet': { name: 'Coinbase CDP Wallet', category: 'Hold' as const, description: 'USDC treasury on Base with provider-managed signing.' },
   'stripe-revenue': { name: 'Stripe Revenue', category: 'Receive' as const, description: 'Customer checkout, invoice, settlement, and refund workflows.' },
   'lithic-card': { name: 'Lithic Cards', category: 'Spend' as const, description: 'Single-use and merchant-locked virtual card sessions.' },
+  'bridge-rail': { name: 'Bridge Rail', category: 'Bridge' as const, description: 'Virtual accounts & liquidation addresses for automated fiat/stablecoin routing.' },
+}
+
+function fallbackCapabilities(accountId: string): CapabilityAvailabilityResponse {
+  return {
+    account_id: accountId,
+    spec_version: CAPABILITY_MANIFEST.spec_version,
+    updated_at: CAPABILITY_MANIFEST.updated_at,
+    releases: CAPABILITY_MANIFEST.releases.map(release => ({ ...release, items: [...release.items] })),
+    capabilities: CAPABILITY_MANIFEST.capabilities.map(capability => ({
+      ...capability,
+      examples: [...capability.examples],
+      requires_provider_categories: [...capability.requires_provider_categories],
+      requires_provider_capabilities: [...capability.requires_provider_capabilities],
+      environments: [...capability.environments],
+      flow: [...capability.flow],
+      tools: [...capability.tools],
+      granted: true,
+      available: false,
+      provider_ids: [],
+      environment: null,
+      unavailable_reason: capability.requires_provider_categories.length
+        ? `Connect a ${capability.requires_provider_categories.join(' or ')} provider to make this capability executable.`
+        : null,
+    })),
+  }
 }
 
 function displayPositionProvider(id: string) {
-  if (id.includes('card')) return 'Lithic demo position'
-  if (id.includes('revenue')) return 'Stripe demo position'
-  if (id.includes('treasury')) return 'Coinbase demo position'
+  if (id.includes('card') || id.includes('lithic')) return 'Lithic Cards'
+  if (id.includes('revenue') || id.includes('stripe')) return 'Stripe Revenue'
+  if (id.includes('treasury') || id.includes('coinbase')) return 'Coinbase CDP Wallet'
+  if (id.includes('bridge')) return 'Bridge Rail'
   return id
+}
+
+// Daemon positions store the internal route id (e.g. "fake-treasury") rather than
+// the canonical provider id used for branding/icons. Normalize so ProviderLogo
+// and display labels resolve to the correct brand mark.
+const ROUTE_TO_PROVIDER: Record<string, string> = {
+  'fake-treasury': 'coinbase-cdp-wallet',
+  'fake-revenue': 'stripe-revenue',
+  'fake-card': 'lithic-card',
+  'fake-bridge': 'bridge-rail',
+}
+
+function canonicalProviderId(id: string): string {
+  return ROUTE_TO_PROVIDER[id] ?? id
+}
+
+function positionStatusFor(mode: string): 'demo' | 'sandbox' | 'live' {
+  if (mode === 'demo') return 'demo'
+  if (mode === 'live') return 'live'
+  return 'sandbox'
+}
+
+function titleCaseNetwork(network?: string): string | undefined {
+  if (!network) return network
+  return network.split(/[-_ ]+/).map(part => part ? part[0].toUpperCase() + part.slice(1) : part).join(' ')
 }
 
 function formatAtomicValue(value: string, decimals: number) {
@@ -61,31 +113,33 @@ function formatAtomicValue(value: string, decimals: number) {
   return `${negative ? '-' : ''}${Number(whole).toLocaleString()}.${fraction}`
 }
 
+type DiagEntry = { status: string; detail: string }
+
+function diagStatus(entry?: DiagEntry): DiagnosticCheck['status'] {
+  const status = entry?.status ?? 'unavailable'
+  if (['running', 'protected', 'ready'].includes(status)) return 'healthy'
+  if (['manual_only', 'not_configured'].includes(status)) return 'attention'
+  return 'unavailable'
+}
+
+function diagLabel(entry?: DiagEntry): string {
+  return (entry?.status ?? 'unavailable').replaceAll('_', ' ')
+}
+
 function mapDiagnostics(input?: DiagnosticsResponse): { version: string; startedAt: string; diagnostics: DiagnosticCheck[] } {
   if (!input) return { version: '0.1.0', startedAt: 'Unavailable', diagnostics: [] }
-  const checks = [
-    ['Local daemon', input.daemon],
-    ['Encrypted ledger', input.database],
-    ['Loopback HTTP', input.transport.tcp],
-    ['Unix socket', input.transport.unix_socket],
-    ['Provider process host', input.provider_host],
-    ['Reconciliation', input.reconciliation],
-    ['Recovery package', input.recovery],
-  ] as const
-  return {
-    version: input.version,
-    startedAt: new Date(input.started_at).toLocaleString(),
-    diagnostics: checks.map(([name, check]) => {
-      const healthy = ['running', 'protected', 'ready'].includes(check.status)
-      const attention = ['manual_only', 'not_configured'].includes(check.status)
-      return {
-        name,
-        status: healthy ? 'healthy' as const : attention ? 'attention' as const : 'unavailable' as const,
-        label: check.status.replaceAll('_', ' '),
-        detail: check.detail,
-      }
-    }),
-  }
+  const agent = input.transport.unix_socket
+  const checks: DiagnosticCheck[] = [
+    { name: 'Local daemon', group: 'runtime', status: diagStatus(input.daemon), label: diagLabel(input.daemon), detail: input.daemon.detail },
+    { name: 'Encrypted storage', group: 'runtime', status: diagStatus(input.database), label: diagLabel(input.database), detail: input.database.detail },
+    { name: 'Agent access', group: 'runtime', status: diagStatus(agent), label: diagLabel(agent), detail: agent.detail },
+    { name: 'Loopback HTTP', group: 'advanced', status: diagStatus(input.transport.tcp), label: diagLabel(input.transport.tcp), detail: input.transport.tcp.detail },
+    { name: 'Unix socket', group: 'advanced', status: diagStatus(input.transport.unix_socket), label: diagLabel(input.transport.unix_socket), detail: input.transport.unix_socket.detail },
+    { name: 'Provider process host', group: 'advanced', status: diagStatus(input.provider_host), label: diagLabel(input.provider_host), detail: input.provider_host.detail },
+    { name: 'Reconciliation', group: 'advanced', status: diagStatus(input.reconciliation), label: diagLabel(input.reconciliation), detail: input.reconciliation.detail },
+    { name: 'Recovery package', group: 'advanced', status: diagStatus(input.recovery), label: diagLabel(input.recovery), detail: input.recovery.detail },
+  ]
+  return { version: input.version, startedAt: new Date(input.started_at).toLocaleString(), diagnostics: checks }
 }
 
 function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsResponse): DashboardData {
@@ -114,9 +168,8 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
     }
   })
   const system = mapDiagnostics(diagnostics)
+  const providerModeById = new Map(snapshot.providers.map(provider => [provider.id, provider.mode]))
   return {
-    principalName: snapshot.principal.name,
-    administratorName: snapshot.administrator_name,
     accounts: snapshot.accounts,
     accountId: snapshot.account.id,
     accountName: snapshot.account.name,
@@ -126,19 +179,23 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
     valuationAt: new Date(snapshot.balance.estimated_at).toLocaleString(),
     outboxCursor: String(snapshot.outbox_cursor),
     detectedRuntimes: snapshot.runtimes,
-    positions: snapshot.balance.positions.map(position => ({
-      provider: position.provider,
-      label: displayPositionProvider(position.provider),
-      asset: position.asset,
-      network: position.network,
-      available: position.available,
-      reserved: position.reserved,
-      pending: position.pending,
-      settled: position.settled,
-      decimals: position.decimals,
-      status: 'sandbox',
-      reconciledAt: new Date(position.reconciled_at).toLocaleString(),
-    })),
+    positions: snapshot.balance.positions.map(position => {
+      const providerId = canonicalProviderId(position.provider)
+      const mode = providerModeById.get(providerId) ?? 'sandbox'
+      return {
+        provider: providerId,
+        label: displayPositionProvider(providerId),
+        asset: position.asset,
+        network: titleCaseNetwork(position.network),
+        available: position.available,
+        reserved: position.reserved,
+        pending: position.pending,
+        settled: position.settled,
+        decimals: position.decimals,
+        status: positionStatusFor(mode),
+        reconciledAt: new Date(position.reconciled_at).toLocaleString(),
+      }
+    }),
     transactions,
     agents: snapshot.agents.filter(agent => agent.status !== 'revoked').map(agent => ({
       id: agent.id,
@@ -153,25 +210,26 @@ function mapSnapshot(response: SnapshotResponse, diagnostics?: DiagnosticsRespon
     })),
     providers: snapshot.providers.map(provider => {
       const catalog = PROVIDERS[provider.id as keyof typeof PROVIDERS] ?? { name: provider.id, category: 'Hold' as const, description: 'Bundled provider adapter.' }
-      const connected = provider.state === 'sandbox' || provider.state === 'live' || provider.state === 'live_ready'
+      const connected = provider.state !== 'not_connected' && provider.state !== 'disconnected' && provider.mode !== 'none'
+      const modeLabel = provider.mode === 'demo' ? 'Demo route' : provider.mode === 'sandbox' ? 'Sandbox credentials' : provider.mode === 'live' ? 'Live credentials' : 'Credentials'
       return {
         id: provider.id,
         name: catalog.name,
         category: catalog.category,
         description: catalog.description,
         capabilities: provider.capabilities,
-        status: connected ? provider.state as 'sandbox' | 'live_ready' | 'live' : 'disconnected',
-        detail: connected ? provider.state === 'live_ready' ? `${provider.mode} credentials · verified` : `${provider.mode === 'demo' ? 'Demo route' : provider.mode} · connected` : 'No route connected',
+        mode: provider.mode as any,
+        status: connected ? (provider.state as any) : 'disconnected',
+        detail: connected ? `${modeLabel} · connected` : 'No route connected',
       }
     }),
+    capabilities: snapshot.capabilities ?? fallbackCapabilities(snapshot.account.id),
     ...system,
   }
 }
 
 export function emptyData(runtimes: RuntimeDetection = { openclaw: false, hermes: false }): DashboardData {
   return {
-    principalName: '',
-    administratorName: '',
     accounts: [],
     accountId: '',
     accountName: '',
@@ -181,6 +239,7 @@ export function emptyData(runtimes: RuntimeDetection = { openclaw: false, hermes
     transactions: [],
     agents: [],
     providers: Object.entries(PROVIDERS).map(([id, provider]) => ({ id, ...provider, capabilities: [], status: 'disconnected' as const, detail: 'No route connected' })),
+    capabilities: fallbackCapabilities(''),
     outboxCursor: '0',
     detectedRuntimes: runtimes,
     version: 'Unavailable',
@@ -212,7 +271,7 @@ export async function loadDashboard(signal?: AbortSignal, accountId?: string): P
   }
 }
 
-export async function initializeInstance(input: { administrator_name: string; organization_name: string; account_name: string; demo: boolean }) {
+export async function initializeInstance(input: { account_name: string; demo: boolean }) {
   const response = await fetch('/v1/setup', {
     method: 'POST',
     credentials: 'same-origin',
@@ -241,15 +300,20 @@ export async function daemonRequest<T>(path: string, init: RequestInit = {}): Pr
   return body as T
 }
 
-export function subscribeToEvents(onMessage: () => void): () => void {
+export function subscribeToEvents(onMessage: (events: ActivityEvent[]) => void): () => void {
   if (typeof EventSource === 'undefined') return () => undefined
   const events = new EventSource(`/v1/events?after=${eventCursor}`)
   events.addEventListener('batch', event => {
     try {
-      const rows = JSON.parse((event as MessageEvent).data) as Array<{ id: number }>
+      const rows = JSON.parse((event as MessageEvent).data) as Array<{ id: number; event_type: string; payload: Record<string, unknown>; created_at: string }>
       if (rows.length > 0) {
         eventCursor = Math.max(eventCursor, ...rows.map(row => row.id))
-        onMessage()
+        onMessage(rows.map(row => ({
+          id: row.id,
+          eventType: row.event_type,
+          payload: row.payload,
+          createdAt: row.created_at,
+        })))
       }
     } catch { /* reconnect will refresh */ }
   })

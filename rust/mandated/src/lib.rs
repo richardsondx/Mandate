@@ -56,20 +56,24 @@ pub fn router(service: MandateService) -> Router {
         .route("/v1/transfers", post(transfer))
         .route("/v1/refunds", post(refund))
         .route("/v1/transactions", get(transactions))
+        .route("/v1/continuity", get(continuity_handler))
+        .route("/v1/movements/quote", post(quote_movement_handler))
+        .route("/v1/movements", post(execute_movement_handler))
         .route("/v1/events", get(events))
         .route("/v1/dashboard", get(dashboard))
         .route("/v1/dashboard/login/{ticket}", get(dashboard_login))
+        .route("/v1/me", get(me))
+        .route("/v1/capabilities", get(capabilities))
         .route(
             "/v1/admin/dashboard-sessions",
             post(create_dashboard_session),
         )
         .route("/v1/admin/providers", get(providers))
         .route("/v1/admin/accounts", get(accounts).post(create_account))
-        .route("/v1/admin/profile", post(update_profile))
         .route("/v1/admin/provider-connections", post(connect_provider))
         .route(
             "/v1/admin/provider-connections/{provider_id}",
-            axum::routing::delete(disconnect_provider),
+            axum::routing::get(get_provider_connection).delete(disconnect_provider),
         )
         .route("/v1/admin/agents", post(create_agent))
         .route("/v1/admin/agents/connect", post(connect_agent))
@@ -179,7 +183,6 @@ fn auth(
 
 #[derive(Deserialize)]
 struct InitRequest {
-    name: Option<String>,
     account_name: Option<String>,
     demo: Option<bool>,
 }
@@ -187,10 +190,7 @@ async fn initialize(
     State(s): State<Arc<AppState>>,
     Json(req): Json<InitRequest>,
 ) -> Result<Json<InitResult>, ApiErrorResponse> {
-    let name = req.name.as_deref().unwrap_or("Mandate owner");
     Ok(Json(s.service.initialize_instance(
-        name,
-        name,
         req.account_name.as_deref().unwrap_or("Primary treasury"),
         req.demo.unwrap_or(false),
     )?))
@@ -212,16 +212,10 @@ async fn setup(
     State(s): State<Arc<AppState>>,
     Json(req): Json<SetupRequest>,
 ) -> Result<axum::response::Response, ApiErrorResponse> {
-    let result = s.service.initialize_instance(
-        &req.administrator_name,
-        &req.organization_name,
-        &req.account_name,
-        req.demo,
-    )?;
+    let result = s.service.initialize_instance(&req.account_name, req.demo)?;
     let stored = store_admin_token(&result.admin_token);
     let (session, csrf) = create_dashboard_session_values(&s);
     let body = serde_json::json!({
-        "principal": result.principal,
         "account": result.account,
         "csrf_token": csrf,
         "admin_token_stored": stored,
@@ -244,6 +238,59 @@ async fn balance(
     auth(&s, &headers, false, Some("balance"), Some(&id), false)?;
     Ok(Json(s.service.balance(&id)?))
 }
+
+#[derive(Deserialize)]
+struct CapabilityQuery {
+    account_id: Option<String>,
+}
+
+async fn capabilities(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<CapabilityQuery>,
+) -> Result<Json<CapabilityAvailabilityResponse>, ApiErrorResponse> {
+    if let Some(token) = bearer(&headers) {
+        let identity = s.service.introspect(token)?;
+        let account_id = if identity.is_admin {
+            q.account_id
+                .or_else(|| {
+                    s.service
+                        .list_accounts()
+                        .ok()?
+                        .first()
+                        .map(|account| account.id.clone())
+                })
+                .ok_or_else(|| ApiError::invalid("account_id is required"))?
+        } else {
+            let scoped = identity
+                .account_id
+                .ok_or_else(|| ApiError::forbidden("credential has no economic account"))?;
+            if q.account_id
+                .as_deref()
+                .is_some_and(|requested| requested != scoped)
+            {
+                return Err(ApiError::forbidden(
+                    "credential is scoped to a different economic account",
+                )
+                .into());
+            }
+            scoped
+        };
+        s.service
+            .authenticate(token, false, None, Some(&account_id))?;
+        return Ok(Json(s.service.capabilities_for(
+            &account_id,
+            identity.capabilities.as_deref(),
+        )?));
+    }
+
+    let account_id = q
+        .account_id
+        .ok_or_else(|| ApiError::invalid("account_id is required"))?;
+    auth(&s, &headers, false, None, Some(&account_id), false)?;
+    Ok(Json(s.service.capabilities_for(&account_id, None)?))
+}
+
 async fn receive(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -358,6 +405,38 @@ async fn refund(
         true,
     )?;
     Ok(Json(s.service.create_money_operation("refund", req.money)?))
+}
+
+#[derive(Deserialize)]
+struct ContinuityQuery {
+    account_id: String,
+}
+
+async fn continuity_handler(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ContinuityQuery>,
+) -> Result<Json<mandate_core::ContinuityEvaluation>, ApiErrorResponse> {
+    auth(&s, &headers, false, None, Some(&q.account_id), false)?;
+    Ok(Json(s.service.evaluate_continuity(&q.account_id)?))
+}
+
+async fn quote_movement_handler(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<mandate_core::MovementQuoteRequest>,
+) -> Result<Json<mandate_core::MovementQuote>, ApiErrorResponse> {
+    auth(&s, &headers, false, None, Some(&req.account_id), true)?;
+    Ok(Json(s.service.quote_movement(req)?))
+}
+
+async fn execute_movement_handler(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(quote): Json<mandate_core::MovementQuote>,
+) -> Result<Json<mandate_core::MovementRecord>, ApiErrorResponse> {
+    auth(&s, &headers, false, None, Some(&quote.account_id), true)?;
+    Ok(Json(s.service.execute_movement(quote)?))
 }
 
 #[derive(Deserialize)]
@@ -529,6 +608,46 @@ struct DashboardQuery {
     account_id: Option<String>,
 }
 
+/// Token introspection: returns the caller's identity (admin/operator or
+/// agent) from the bearer credential, with no required account or capability.
+/// Lets an agent discover its economic account, authority, and capabilities
+/// from its token alone. Dashboard cookie sessions resolve to the operator.
+async fn me(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<mandate_core::CallerIdentity>, ApiErrorResponse> {
+    if let Some(token) = bearer(&headers) {
+        return Ok(Json(s.service.introspect(token)?));
+    }
+    if headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .is_some()
+    {
+        if let Some(session) = cookie(&headers, "mandate_session") {
+            let _csrf = s
+                .dashboard_sessions
+                .lock()
+                .unwrap()
+                .get(&session)
+                .cloned()
+                .ok_or_else(ApiError::unauthorized)?;
+            return Ok(Json(mandate_core::CallerIdentity {
+                is_admin: true,
+                agent_id: None,
+                name: None,
+                runtime: None,
+                account_id: None,
+                account_name: None,
+                authority: None,
+                capabilities: None,
+                status: None,
+            }));
+        }
+    }
+    Err(ApiError::unauthorized().into())
+}
+
 async fn dashboard(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -576,17 +695,6 @@ async fn create_account(
     auth(&s, &headers, true, None, None, true)?;
     Ok(Json(s.service.create_account(&req.name)?))
 }
-
-async fn update_profile(
-    State(s): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<ProfileUpdateRequest>,
-) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
-    auth(&s, &headers, true, None, None, true)?;
-    s.service.update_profile(req)?;
-    Ok(Json(serde_json::json!({"status":"updated"})))
-}
-
 async fn connect_provider(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -642,6 +750,132 @@ async fn disconnect_provider(
     Ok(Json(status))
 }
 
+#[derive(Deserialize)]
+struct ProviderConnectionQuery {
+    account_id: String,
+}
+
+async fn get_provider_connection(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(provider_id): Path<String>,
+    Query(query): Query<ProviderConnectionQuery>,
+) -> Result<Json<serde_json::Value>, ApiErrorResponse> {
+    auth(&s, &headers, true, None, None, true)?;
+    // Demo routes never store external credentials, so there is nothing to
+    // surface. Only sandbox/live connections have a Keychain entry.
+    let mode = s
+        .service
+        .provider_mode(&query.account_id, &provider_id)?
+        .unwrap_or_default();
+    let fields = redacted_provider_fields(&query.account_id, &provider_id, &mode);
+    Ok(Json(serde_json::json!({ "fields": fields })))
+}
+
+/// The fields a user filled in when connecting a provider, paired with a
+/// human label and whether the value is sensitive. Only fields actually
+/// entered by the user are listed here — derived values such as `baseUrl`
+/// or `mode` are intentionally excluded.
+fn provider_display_fields(provider_id: &str) -> &'static [(&'static str, &'static str, bool)] {
+    // (config key, label, sensitive)
+    match provider_id {
+        "stripe-revenue" => &[("secretKey", "Stripe secret key", true)],
+        "lithic-card" => &[
+            ("apiKey", "Lithic API key", true),
+            ("accountToken", "Account token", false),
+        ],
+        "bridge-rail" => &[("apiKey", "Bridge API key", true)],
+        "coinbase-cdp-wallet" => &[
+            ("apiKeyId", "API key ID", false),
+            ("apiKeySecret", "API key secret", true),
+            ("network", "Network", false),
+            ("accountAddress", "Account address", false),
+            ("walletAuth", "Wallet authorization secret", true),
+        ],
+        _ => &[],
+    }
+}
+
+fn redact_secret(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return "Not set".into();
+    }
+    if len <= 4 {
+        return "•".repeat(len);
+    }
+    let suffix: String = chars[len.saturating_sub(4)..].iter().collect();
+    format!("{}{}", "•".repeat(6), suffix)
+}
+
+fn redacted_provider_fields(
+    account_id: &str,
+    provider_id: &str,
+    mode: &str,
+) -> Vec<serde_json::Value> {
+    if mode == "demo" || mode.is_empty() {
+        return Vec::new();
+    }
+    let config = match read_provider_config(account_id, provider_id) {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
+    let object = match config.as_object() {
+        Some(object) => object,
+        None => return Vec::new(),
+    };
+    provider_display_fields(provider_id)
+        .iter()
+        .filter_map(|(key, label, sensitive)| {
+            let value = object.get(*key)?.as_str()?;
+            let display = if value.is_empty() {
+                "Not set".to_string()
+            } else if *sensitive {
+                redact_secret(value)
+            } else {
+                value.to_string()
+            };
+            Some(serde_json::json!({
+                "key": key,
+                "label": label,
+                "value": display,
+                "sensitive": sensitive,
+            }))
+        })
+        .collect()
+}
+
+fn read_provider_config(account_id: &str, provider_id: &str) -> Option<serde_json::Value> {
+    #[cfg(target_os = "macos")]
+    {
+        let service = format!("com.mandate.provider.{account_id}.{provider_id}");
+        let output = Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                &service,
+                "-a",
+                provider_id,
+                "-w",
+            ])
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let secret = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        serde_json::from_str(&secret).ok()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (account_id, provider_id);
+        None
+    }
+}
+
 fn delete_provider_config(account_id: &str, provider_id: &str) {
     #[cfg(target_os = "macos")]
     {
@@ -655,7 +889,7 @@ fn delete_provider_config(account_id: &str, provider_id: &str) {
 fn provider_entry(provider_id: &str) -> Result<std::path::PathBuf, ApiError> {
     if !matches!(
         provider_id,
-        "coinbase-cdp-wallet" | "stripe-revenue" | "lithic-card"
+        "coinbase-cdp-wallet" | "stripe-revenue" | "lithic-card" | "bridge-rail"
     ) {
         return Err(ApiError::invalid("unknown bundled provider"));
     }
@@ -933,31 +1167,39 @@ fn install_runtime(
                 command.env("HOME", &home).args(["mcp", "list"]);
                 command
             })?;
-            let registration = if list
+            if list
                 .lines()
                 .any(|line| line.to_lowercase().contains("mandate"))
             {
-                "Mandate was already registered with Hermes".to_string()
-            } else {
-                command_receipt_with_input(
+                let _ = command_receipt_with_input(
                     {
                         let mut command = Command::new("hermes");
-                        command.env("HOME", &home).args([
-                            "mcp",
-                            "add",
-                            "mandate",
-                            "--command",
-                            "node",
-                            "--env",
-                            &format!("MANDATE_AGENT_CREDENTIAL_FILE={credential}"),
-                            "--args",
-                            &entry,
-                        ]);
+                        command
+                            .env("HOME", &home)
+                            .args(["mcp", "remove", "mandate"]);
                         command
                     },
                     "Y\n",
-                )?
-            };
+                );
+            }
+            let registration = command_receipt_with_input(
+                {
+                    let mut command = Command::new("hermes");
+                    command.env("HOME", &home).args([
+                        "mcp",
+                        "add",
+                        "mandate",
+                        "--command",
+                        "node",
+                        "--env",
+                        &format!("MANDATE_AGENT_CREDENTIAL_FILE={credential}"),
+                        "--args",
+                        &entry,
+                    ]);
+                    command
+                },
+                "Y\n",
+            )?;
             let probe = command_receipt({
                 let mut command = Command::new("hermes");
                 command.env("HOME", &home).args(["mcp", "test", "mandate"]);
@@ -1282,5 +1524,145 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(accepted.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn me_endpoint_introspects_admin_and_agent_credentials() {
+        let svc = MandateService::in_memory().unwrap();
+        let app = router(svc.clone());
+        let init = app
+            .clone()
+            .oneshot(
+                Request::post("/v1/init")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"account_name":"Me test","demo":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = init.into_body().collect().await.unwrap().to_bytes();
+        let result: InitResult = serde_json::from_slice(&body).unwrap();
+
+        // No credential -> unauthorized.
+        let unauth = app
+            .clone()
+            .oneshot(Request::get("/v1/me").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+        // Admin token introspects to the local operator.
+        let admin_resp = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/me")
+                    .header("authorization", format!("Bearer {}", result.admin_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(admin_resp.status(), StatusCode::OK);
+        let admin_body = admin_resp.into_body().collect().await.unwrap().to_bytes();
+        let admin: serde_json::Value = serde_json::from_slice(&admin_body).unwrap();
+        assert_eq!(admin["is_admin"], true);
+        assert!(admin["account_id"].is_null());
+
+        // Agent token introspects to its scoped account, name, authority, and capabilities.
+        let credential = svc
+            .create_agent(mandate_core::AgentCreateRequest {
+                name: "Codex Agent".into(),
+                account_id: result.account.id.clone(),
+                authority: mandate_core::AuthorityMode::Independent,
+                capabilities: vec![
+                    "balance".into(),
+                    "receive".into(),
+                    "invoice".into(),
+                    "checkout".into(),
+                    "pay".into(),
+                    "transfer".into(),
+                    "transactions".into(),
+                    "refund".into(),
+                ],
+            })
+            .unwrap();
+        let agent_resp = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/me")
+                    .header("authorization", format!("Bearer {}", credential.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent_resp.status(), StatusCode::OK);
+        let agent_body = agent_resp.into_body().collect().await.unwrap().to_bytes();
+        let agent: serde_json::Value = serde_json::from_slice(&agent_body).unwrap();
+        assert_eq!(agent["is_admin"], false);
+        assert_eq!(agent["agent_id"], credential.agent_id);
+        assert_eq!(agent["name"], "Codex Agent");
+        assert_eq!(agent["runtime"], "custom");
+        assert_eq!(agent["account_id"], result.account.id);
+        assert_eq!(agent["account_name"], "Me test");
+        assert_eq!(agent["authority"], "independent");
+        let caps = agent["capabilities"].as_array().unwrap();
+        assert!(caps.iter().any(|c| c == "balance"));
+        assert!(caps.iter().any(|c| c == "refund"));
+        assert_eq!(agent["status"], "connected");
+
+        // A revoked agent credential can no longer introspect.
+        svc.revoke_agent(&credential.agent_id).unwrap();
+        let revoked = app
+            .oneshot(
+                Request::get("/v1/me")
+                    .header("authorization", format!("Bearer {}", credential.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn capabilities_endpoint_returns_grant_and_route_truth() {
+        let svc = MandateService::in_memory().unwrap();
+        let init = svc.initialize_instance("Capability test", false).unwrap();
+        svc.connect_demo_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        let credential = svc
+            .create_agent(AgentCreateRequest {
+                name: "Hermes".into(),
+                account_id: init.account.id,
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["checkout".into(), "balance".into()],
+            })
+            .unwrap();
+        let response = router(svc)
+            .oneshot(
+                Request::get("/v1/capabilities")
+                    .header("authorization", format!("Bearer {}", credential.token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let capabilities = value["capabilities"].as_array().unwrap();
+        let checkout = capabilities
+            .iter()
+            .find(|capability| capability["id"] == "checkout")
+            .unwrap();
+        assert_eq!(checkout["granted"], true);
+        assert_eq!(checkout["available"], true);
+        let pay = capabilities
+            .iter()
+            .find(|capability| capability["id"] == "pay")
+            .unwrap();
+        assert_eq!(pay["granted"], false);
+        assert_eq!(pay["available"], false);
     }
 }

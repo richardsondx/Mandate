@@ -193,12 +193,6 @@ pub struct AgentUpdateRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ProfileUpdateRequest {
-    pub administrator_name: String,
-    pub principal_name: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCredential {
     pub agent_id: String,
     pub token: String,
@@ -227,8 +221,6 @@ pub struct InstanceStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SetupRequest {
-    pub administrator_name: String,
-    pub organization_name: String,
     pub account_name: String,
     #[serde(default)]
     pub demo: bool,
@@ -262,6 +254,75 @@ pub struct ProviderStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityRelease {
+    pub version: String,
+    pub date: String,
+    pub items: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityProvider {
+    pub id: String,
+    pub display_name: String,
+    pub category: String,
+    pub description: String,
+    pub agent_capabilities: Vec<String>,
+    pub protocol_capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityDefinition {
+    pub id: String,
+    pub title: String,
+    pub intent_group: String,
+    pub summary: String,
+    pub description: String,
+    pub direction: String,
+    pub examples: Vec<String>,
+    pub use_when: String,
+    pub do_not_use_when: String,
+    pub requires_provider_categories: Vec<String>,
+    pub requires_provider_capabilities: Vec<String>,
+    pub side_effect: String,
+    pub mutation: bool,
+    pub environments: Vec<String>,
+    pub introduced: String,
+    pub updated: String,
+    pub flow: Vec<String>,
+    pub tools: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityManifest {
+    pub schema_version: u32,
+    pub spec_version: String,
+    pub updated_at: String,
+    pub releases: Vec<CapabilityRelease>,
+    pub providers: Vec<CapabilityProvider>,
+    pub capabilities: Vec<CapabilityDefinition>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityAvailability {
+    #[serde(flatten)]
+    pub definition: CapabilityDefinition,
+    pub granted: bool,
+    pub available: bool,
+    pub provider_ids: Vec<String>,
+    pub environment: Option<String>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CapabilityAvailabilityResponse {
+    pub account_id: String,
+    pub spec_version: String,
+    pub updated_at: String,
+    pub releases: Vec<CapabilityRelease>,
+    pub capabilities: Vec<CapabilityAvailability>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSummary {
     pub id: String,
     pub name: String,
@@ -274,6 +335,39 @@ pub struct AgentSummary {
     pub installation_detail: Option<String>,
 }
 
+/// Identity of the caller behind a credential, returned by token introspection
+/// (`GET /v1/me`). Lets an agent discover its own account, authority, and
+/// capabilities from its token alone, without out-of-band configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CallerIdentity {
+    /// `true` when the credential is the local operator/administrator.
+    pub is_admin: bool,
+    /// Agent id, present only for agent-scoped credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent display name, present only for agent-scoped credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Runtime label (`openclaw`, `hermes`, or `custom`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    /// Economic account id the credential is scoped to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Human-readable economic account name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_name: Option<String>,
+    /// Authority mode of the grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority: Option<AuthorityMode>,
+    /// Capabilities granted to the credential.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub capabilities: Option<Vec<String>>,
+    /// Grant status (`connected` or `revoked`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeDetection {
     pub openclaw: bool,
@@ -282,14 +376,13 @@ pub struct RuntimeDetection {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DashboardSnapshot {
-    pub principal: Principal,
-    pub administrator_name: String,
     pub accounts: Vec<EconomicAccount>,
     pub account: EconomicAccount,
     pub balance: BalanceResponse,
     pub transactions: TransactionsResponse,
     pub agents: Vec<AgentSummary>,
     pub providers: Vec<ProviderStatus>,
+    pub capabilities: CapabilityAvailabilityResponse,
     pub outbox_cursor: i64,
     pub runtimes: RuntimeDetection,
 }
@@ -340,3 +433,116 @@ impl fmt::Display for ApiError {
     }
 }
 impl std::error::Error for ApiError {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "type", content = "id", rename_all = "snake_case")]
+pub enum MoneyNodeRef {
+    Position(String),
+    Endpoint(String),
+}
+
+impl MoneyNodeRef {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Position(id) => id,
+            Self::Endpoint(id) => id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct AssetRef {
+    pub code: String,
+    #[serde(default)]
+    pub network: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Environment {
+    Sandbox,
+    Live,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteExecutionMode {
+    OnDemand,
+    AutomaticSettlement,
+    Scheduled,
+    Attached,
+    JustInTime,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RouteLeg {
+    pub id: String,
+    pub source: MoneyNodeRef,
+    pub destination: MoneyNodeRef,
+    pub executor_provider_id: String,
+    pub source_asset: AssetRef,
+    pub destination_asset: AssetRef,
+    pub capability: String,
+    pub environment: Environment,
+    pub execution_mode: RouteExecutionMode,
+    pub unattended_supported: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MovementQuoteRequest {
+    pub account_id: String,
+    pub amount: AtomicAmount,
+    pub source_provider: String,
+    pub destination_provider: String,
+    pub asset: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MovementQuote {
+    pub quote_id: String,
+    pub account_id: String,
+    pub input_amount: AtomicAmount,
+    pub input_asset: AssetRef,
+    pub expected_output_amount: AtomicAmount,
+    pub output_asset: AssetRef,
+    pub fees_atomic: AtomicAmount,
+    pub estimated_duration_seconds: u64,
+    pub expires_at: DateTime<Utc>,
+    pub legs: Vec<RouteLeg>,
+    pub autonomous: bool,
+    pub human_action_required: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "status", content = "detail")]
+pub enum MovementState {
+    Planned,
+    Quoted,
+    Submitted,
+    InFlight,
+    Settled,
+    Failed(String),
+    Reversed(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MovementRecord {
+    pub id: String,
+    pub account_id: String,
+    pub quote: MovementQuote,
+    pub state: MovementState,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ContinuityEvaluation {
+    pub account_id: String,
+    pub loop_status: String,
+    pub missing_routes_count: usize,
+    pub continuity_gaps: Vec<String>,
+    pub candidate_plans: Vec<serde_json::Value>,
+    pub reachable_capabilities: Vec<String>,
+}

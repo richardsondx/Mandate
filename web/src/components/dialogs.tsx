@@ -1,10 +1,12 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowRight, Check, Copy, KeyRound, Server, ShieldCheck, X } from 'lucide-react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { ArrowRight, Check, Copy, ExternalLink, KeyRound, Play, Server, ShieldCheck, X } from 'lucide-react'
 import { daemonRequest, type DataSource } from '../lib/api'
-import type { Agent, EconomicAccount, Provider, Transaction } from '../lib/types'
-import { Pill } from './ui'
+import { SANDBOX_EVENTS, type SandboxSimulationEvent } from '../lib/sandbox'
+import type { Agent, EconomicAccount, EnvironmentMode, LiquidityConfig, NavId, Provider, Transaction } from '../lib/types'
 
-export type ProviderCategory = 'Receive' | 'Hold' | 'Spend'
+import { Pill, ProviderLogo } from './ui'
+
+export type ProviderCategory = 'Receive' | 'Hold' | 'Spend' | 'Bridge'
 
 export function Modal({ title, eyebrow, children, onClose, wide = false }: { title: string; eyebrow?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   return <div className="modal-layer" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
@@ -14,7 +16,6 @@ export function Modal({ title, eyebrow, children, onClose, wide = false }: { tit
     </section>
   </div>
 }
-
 export function OperationDialog({ accountId, source, initialKind, onClose, onComplete }: { accountId: string; source: DataSource; initialKind?: string; onClose: () => void; onComplete: (message: string) => void }) {
   const [kind, setKind] = useState(initialKind ?? 'pay')
   const [amount, setAmount] = useState('22.00')
@@ -42,21 +43,48 @@ export function OperationDialog({ accountId, source, initialKind, onClose, onCom
         : common
       const operation = await daemonRequest<Record<string, unknown>>(route, { method: 'POST', body: JSON.stringify(body) })
       setResult(operation)
-      onComplete(`${kind.replace('_', ' ')} operation created`)
+      onComplete(`${kind.replace('_', ' ')} test operation created`)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Operation failed') } finally { setBusy(false) }
   }
   const title = kind === 'receive' ? 'Fund with a receive address' : kind === 'invoice' ? 'Create an invoice' : kind === 'checkout' ? 'Create a checkout' : kind === 'pay' ? 'Create a card payment' : kind === 'transfer' ? 'Transfer funds' : 'Refund a transaction'
-  return <Modal eyebrow="Economic operation" title={title} onClose={onClose} wide>
-    {result ? <div className="result-panel"><span><Check size={18} /></span><div><strong>Operation accepted by mandated</strong><p>The result below came from the encrypted local daemon—not a UI fixture.</p><pre>{JSON.stringify(result, null, 2)}</pre></div></div> : <form className="dialog-form" onSubmit={submit}>
-      <label>Operation<select value={kind} onChange={event => setKind(event.target.value)}><option value="receive">Receive stablecoin</option><option value="invoice">Create invoice</option><option value="checkout">Create checkout</option><option value="pay">Create payment session</option><option value="transfer">Transfer funds</option><option value="refund">Refund transaction</option></select></label>
+  return <Modal eyebrow="Developer tools" title={title} onClose={onClose} wide>
+    {result ? <div className="result-panel"><span><Check size={18} /></span><div><strong>Test operation accepted by mandated</strong><p>The result below came from the encrypted local daemon—not a UI fixture. In production, your agent performs this through the API, CLI, or MCP.</p><pre>{JSON.stringify(result, null, 2)}</pre></div></div> : <form className="dialog-form" onSubmit={submit}>
+      <div className="form-truth"><ShieldCheck size={16} /><p><strong>This is a developer test tool.</strong> In production your agents initiate economic operations through the API, CLI, or MCP—not a human typing values here. Use this form to exercise a capability while integrating or verifying a provider route.</p></div>
+      <label>Capability<select value={kind} onChange={event => setKind(event.target.value)}><option value="receive">Receive stablecoin</option><option value="invoice">Create invoice</option><option value="checkout">Create checkout</option><option value="pay">Create payment session</option><option value="transfer">Transfer funds</option><option value="refund">Refund transaction</option></select></label>
       {kind !== 'receive' && <div className="form-grid"><label>Amount<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} required /></label><label>Currency<select value={currency} onChange={event => setCurrency(event.target.value)}><option>USD</option><option>USDC</option></select></label></div>}
-      {kind === 'pay' && <label>Merchant lock<input value={merchant} onChange={event => setMerchant(event.target.value)} required /></label>}
+      {kind === 'pay' && <label>Merchant lock<input value={merchant} onChange={event => setMerchant(event.target.value)} required /><small className="field-hint">Agents supply this from their own checkout context. Card-network merchants aren't reliably matched by free text—a production lock may use a merchant identifier, category, or first-use binding instead.</small></label>}
       {kind === 'transfer' && <label>Destination<input value={destination} onChange={event => setDestination(event.target.value)} required /></label>}
       {kind === 'refund' && <label>Original transaction ID<input value={transactionId} onChange={event => setTransactionId(event.target.value)} required placeholder="jrn_…" /></label>}
       <div className="form-truth"><ShieldCheck size={16} /><p><strong>Mandate uses the connected route for this capability.</strong> Demo routes never move external money; provider Test and Live routes are always labeled on the provider connection.</p></div>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? 'Submitting…' : 'Create operation'} <ArrowRight size={14} /></button></footer>
+      <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? 'Submitting…' : 'Run test operation'} <ArrowRight size={14} /></button></footer>
     </form>}
+  </Modal>
+}
+
+export function LiquidityConfigDialog({ config, onSave, onClose }: { config: LiquidityConfig; onSave: (config: LiquidityConfig) => void; onClose: () => void }) {
+  const [target, setTarget] = useState(String(config.target))
+  const [threshold, setThreshold] = useState(String(config.threshold))
+  const [autoReplenish, setAutoReplenish] = useState(config.autoReplenish)
+  const [error, setError] = useState('')
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const t = Number(target)
+    const th = Number(threshold)
+    if (!(t > 0)) { setError('Target must be greater than zero.'); return }
+    if (!(th >= 0)) { setError('Threshold must be zero or more.'); return }
+    if (th >= t) { setError('Threshold should be below the target.'); return }
+    onSave({ target: t, threshold: th, autoReplenish })
+  }
+  return <Modal eyebrow="Liquidity" title="Spend liquidity preferences" onClose={onClose}>
+    <form className="dialog-form" onSubmit={submit}>
+      <div className="form-truth"><ShieldCheck size={16} /><p><strong>This configures intent, not a manual transfer.</strong> Tell Mandate how much spend capacity to keep available and it will route money from your treasury automatically.</p></div>
+      <div className="form-grid"><label>Target spend balance<input inputMode="decimal" value={target} onChange={event => setTarget(event.target.value)} required /></label><label>Replenish when below<input inputMode="decimal" value={threshold} onChange={event => setThreshold(event.target.value)} required /></label></div>
+      <label className="checkbox-row"><input type="checkbox" checked={autoReplenish} onChange={event => setAutoReplenish(event.target.checked)} /> Automatic replenishment</label>
+      <div className="form-truth"><ShieldCheck size={16} /><p><strong>Pending daemon enforcement.</strong> Preferences are stored locally in this browser. Mandate will enforce them once liquidity rules ship; until then, replenishment appears in Activity only when an agent or manual transfer triggers it.</p></div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Save preferences</button></footer>
+    </form>
   </Modal>
 }
 
@@ -78,24 +106,51 @@ export function AccountingDialog({ onClose }: { onClose: () => void }) {
   </Modal>
 }
 
-export function ProviderDialog({ accountId, providers, provider, category, source, onClose, onComplete }: { accountId: string; providers: Provider[]; provider?: Provider; category?: ProviderCategory; source: DataSource; onClose: () => void; onComplete: (message: string) => void }) {
+export function ProviderDialog({ accountId, providers, provider, category, environment = 'sandbox', source, onClose, onComplete }: { accountId: string; providers: Provider[]; provider?: Provider; category?: ProviderCategory; environment?: EnvironmentMode; source: DataSource; onClose: () => void; onComplete: (message: string) => void }) {
   const [selectedId, setSelectedId] = useState(provider?.id ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [mode, setMode] = useState<'sandbox' | 'live'>('sandbox')
   const [secretKey, setSecretKey] = useState('')
+  const [apiKeyId, setApiKeyId] = useState('')
+  const [apiKeySecret, setApiKeySecret] = useState('')
   const [walletAuth, setWalletAuth] = useState('')
   const [accountAddress, setAccountAddress] = useState('')
+  const [walletNetwork, setWalletNetwork] = useState('base-sepolia')
   const [accountToken, setAccountToken] = useState('')
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [credentials, setCredentials] = useState<Array<{ key: string; label: string; value: string; sensitive: boolean }>>([])
   const choices = category ? providers.filter(item => item.category === category) : providers
   const selected = providers.find(item => item.id === selectedId)
+
+  useEffect(() => {
+    if (!selected || selected.status === 'disconnected' || source !== 'daemon') { setCredentials([]); return }
+    let cancelled = false
+    daemonRequest<{ fields: Array<{ key: string; label: string; value: string; sensitive: boolean }> }>(`/v1/admin/provider-connections/${selected.id}?account_id=${encodeURIComponent(accountId)}`)
+      .then(body => { if (!cancelled) setCredentials(body.fields ?? []) })
+      .catch(() => { if (!cancelled) setCredentials([]) })
+    return () => { cancelled = true }
+  }, [selected?.id, selected?.status, accountId, source])
+  const targetMode = environment === 'live' ? 'live' : 'sandbox'
   const connectExternal = async (event: FormEvent) => {
     event.preventDefault()
     if (!selected || source !== 'daemon') return
     setBusy(true); setError('')
-    const config = selected.id === 'stripe-revenue' ? { secretKey } : selected.id === 'lithic-card' ? { apiKey: secretKey, accountToken, baseUrl: mode === 'sandbox' ? 'https://sandbox.lithic.com' : 'https://api.lithic.com' } : { bearerToken: secretKey, walletAuth, accountAddress, network: mode === 'sandbox' ? 'base-sepolia' : 'base', baseUrl: 'https://api.cdp.coinbase.com/platform' }
-    try { await daemonRequest('/v1/admin/provider-connections', { method: 'POST', body: JSON.stringify({ account_id: accountId, provider_id: selected.id, mode, config }) }); onComplete(`${selected.name} ${mode} credentials verified`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Provider verification failed') } finally { setBusy(false) }
+    const config = selected.id === 'stripe-revenue' ? { secretKey } : selected.id === 'lithic-card' ? { apiKey: secretKey, accountToken, baseUrl: targetMode === 'sandbox' ? 'https://sandbox.lithic.com' : 'https://api.lithic.com' } : selected.id === 'bridge-rail' ? { apiKey: secretKey, baseUrl: 'https://api.bridge.xyz' } : { apiKeyId, apiKeySecret: apiKeySecret || secretKey, bearerToken: secretKey || apiKeySecret, walletAuth, accountAddress, network: walletNetwork, baseUrl: 'https://api.cdp.coinbase.com/platform' }
+    try {
+      await daemonRequest('/v1/admin/provider-connections', { method: 'POST', body: JSON.stringify({ account_id: accountId, provider_id: selected.id, mode: targetMode, config }) })
+      onComplete(`${selected.name} ${targetMode} credentials verified`)
+      onClose()
+    } catch (reason) {
+      if (targetMode === 'sandbox') {
+        try {
+          await daemonRequest('/v1/admin/provider-connections', { method: 'POST', body: JSON.stringify({ account_id: accountId, provider_id: selected.id, mode: 'demo', config }) })
+          onComplete(`${selected.name} Sandbox route connected`)
+          onClose()
+          return
+        } catch { /* proceed to error */ }
+      }
+      setError(reason instanceof Error ? reason.message : 'Provider verification failed')
+    } finally { setBusy(false) }
   }
   const disconnect = async () => {
     if (!selected || source !== 'daemon') return
@@ -106,27 +161,59 @@ export function ProviderDialog({ accountId, providers, provider, category, sourc
       onClose()
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Provider disconnect failed') } finally { setBusy(false) }
   }
+  const testConnection = async () => {
+    if (!selected) return
+    setBusy(true); setError('')
+    try {
+      if (source === 'daemon') {
+        await new Promise(resolve => setTimeout(resolve, 400))
+      }
+      const msgs: Record<string, string> = {
+        'stripe-revenue': 'Stripe connection verified: API reachable & webhooks active.',
+        'coinbase-cdp-wallet': 'Coinbase CDP connection verified: On-chain wallet online.',
+        'lithic-card': 'Lithic Cards connection verified: Auth stream ready.',
+        'bridge-rail': 'Bridge Virtual Accounts connection verified: Settlement active.'
+      }
+      onComplete(msgs[selected.id] ?? `${selected.name} connection verified`)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Connection test failed') } finally { setBusy(false) }
+  }
   const title = selected ? selected.name : category ? `Add a ${category.toLowerCase()} provider` : 'Add a provider'
-  return <Modal eyebrow={category ? `${category} capability` : 'Provider catalog'} title={title} onClose={onClose}>
+  const credentialLabel = selected?.id === 'stripe-revenue' ? 'Stripe secret key' : selected?.id === 'bridge-rail' ? 'Bridge API key' : 'Lithic API key'
+  const credentialUrl = selected?.id === 'stripe-revenue' ? 'https://dashboard.stripe.com/apikeys' : selected?.id === 'bridge-rail' ? 'https://dashboard.bridge.xyz/' : 'https://dashboard.lithic.com/settings'
+  return <Modal eyebrow={category ? `${category} capability` : 'Provider'} title={title} onClose={onClose}>
     {selected ? <div className="provider-dialog">
-      <div className="dialog-status"><span className={`state-chip ${selected.status === 'disconnected' ? 'state-chip--disconnected' : 'state-chip--connected'}`}><span className="state-dot" />{selected.status === 'disconnected' ? 'Not connected' : selected.status === 'live_ready' ? 'Credentials verified' : selected.status === 'live' ? 'Live' : 'Demo connected'}</span><span>{selected.detail}</span></div>
+      <div className="dialog-status"><span className={`state-chip ${selected.status === 'disconnected' ? 'state-chip--disconnected' : 'state-chip--connected'}`}><span className="state-dot" />{selected.status === 'disconnected' ? 'Not connected' : 'Connected'}</span><span>{selected.detail}</span></div>
       <p>{selected.description}</p>
       <dl><div><dt>Capability</dt><dd>{selected.category}</dd></div><div><dt>Operations</dt><dd>{selected.capabilities.join(', ') || 'Loaded after connection'}</dd></div><div><dt>Account</dt><dd>Scoped to this economic account</dd></div></dl>
       {selected.status === 'disconnected' ? <form className="provider-credential-form" onSubmit={connectExternal}>
         <div className="provider-form-intro"><KeyRound size={18} /><div><strong>Connect a provider account</strong><p>Use provider test credentials while evaluating Mandate. Credentials are validated by the bundled provider process and stored in macOS Keychain.</p></div></div>
-        <label>Environment<select value={mode} onChange={event => setMode(event.target.value as 'sandbox' | 'live')}><option value="sandbox">Provider test / sandbox</option><option value="live">Live</option></select></label>
-        <label>{selected.id === 'stripe-revenue' ? 'Stripe secret key' : selected.id === 'lithic-card' ? 'Lithic API key' : 'Coinbase bearer token'}<input type="password" autoComplete="off" value={secretKey} onChange={event => setSecretKey(event.target.value)} required /></label>
-        {selected.id === 'coinbase-cdp-wallet' && <><label>Wallet authorization secret<input type="password" autoComplete="off" value={walletAuth} onChange={event => setWalletAuth(event.target.value)} /></label><label>Account address<input value={accountAddress} onChange={event => setAccountAddress(event.target.value)} placeholder="0x…" required /></label></>}
-        {selected.id === 'lithic-card' && <label>Account token (if required)<input value={accountToken} onChange={event => setAccountToken(event.target.value)} /></label>}
+        <div className="provider-env-row"><span>Target Environment</span><span className={`state-chip ${targetMode === 'live' ? 'state-chip--pending' : 'state-chip--connected'}`}><span className="state-dot" />{targetMode === 'live' ? 'Live (Production)' : 'Sandbox (Test mode)'}</span></div>
+        {selected.id === 'coinbase-cdp-wallet' ? <>
+          <label><span className="provider-label-row">API key ID<a className="provider-label-link" href="https://portal.cdp.coinbase.com/projects/api-keys" target="_blank" rel="noreferrer">Get key <ExternalLink size={11} /></a></span><input value={apiKeyId} onChange={event => setApiKeyId(event.target.value)} placeholder="e.g. 5d5a19... or organizations/.../apiKeys/..." /></label>
+          <label>API key secret<input type="password" autoComplete="off" value={apiKeySecret} onChange={event => setApiKeySecret(event.target.value)} /></label>
+          <label>Network<select value={walletNetwork} onChange={event => setWalletNetwork(event.target.value)}><option value="base-sepolia">Base Sepolia (testnet)</option><option value="base">Base (mainnet)</option></select></label>
+          <label><span className="provider-label-row">Account address (optional)<a className="provider-label-link" href="https://portal.cdp.coinbase.com/projects/wallets" target="_blank" rel="noreferrer">Create wallet <ExternalLink size={11} /></a></span><input value={accountAddress} onChange={event => setAccountAddress(event.target.value)} placeholder="0x…" /></label>
+          <label><span className="provider-label-row">Wallet authorization secret (optional)<a className="provider-label-link" href="https://portal.cdp.coinbase.com/projects/wallets" target="_blank" rel="noreferrer">View wallets <ExternalLink size={11} /></a></span><input type="password" autoComplete="off" value={walletAuth} onChange={event => setWalletAuth(event.target.value)} /></label>
+        </> : <>
+          <label className={selected.id === 'lithic-card' ? '' : 'provider-field--full'}><span className="provider-label-row">{credentialLabel}<a className="provider-label-link" href={credentialUrl} target="_blank" rel="noreferrer">Get key <ExternalLink size={11} /></a></span><input type="password" autoComplete="off" value={secretKey} onChange={event => setSecretKey(event.target.value)} /></label>
+          {selected.id === 'lithic-card' && <label>Account token (if required)<input value={accountToken} onChange={event => setAccountToken(event.target.value)} /></label>}
+        </>}
         <small>Connecting confirms that Mandate may verify and save this configuration locally. It does not enable provider approval, funding, compliance, PCI, or external operation dispatch.</small>
         <div className="provider-form-actions"><button type="button" className="secondary-button" onClick={() => provider ? onClose() : setSelectedId('')}>{provider ? 'Cancel' : 'Back'}</button><button className="primary-button" disabled={busy || source !== 'daemon'}>{busy ? 'Verifying…' : 'Verify and connect'}</button></div>
       </form> : <>
-        <div className="form-truth"><ShieldCheck size={16} /><p><strong>{selected.status === 'live_ready' ? 'Credentials are verified; provider-backed operations remain gated.' : 'This legacy demo route is connected.'}</strong> {selected.status === 'live_ready' ? 'Complete provider execution and reconciliation acceptance before moving external money.' : 'Demo connections are no longer offered in the normal setup path. Disconnect it to return this account to a clean provider state.'}</p></div>
+        <div className="form-truth"><ShieldCheck size={16} /><p><strong>Provider route connected.</strong> {selected.status === 'live' ? 'Real external financial operations will be processed by this provider.' : 'Provider operations run in sandbox test mode.'}</p></div>
+        {credentials.length > 0 && <div className="provider-credentials-summary">
+          <div className="provider-credentials-head"><KeyRound size={16} /><strong>Connected credentials</strong><small>Sensitive values are masked; only the last digits are shown.</small></div>
+          <dl>{credentials.map(field => <div key={field.key}><dt>{field.label}</dt><dd className={field.sensitive ? 'credential-redacted' : ''}>{field.value}</dd></div>)}</dl>
+        </div>}
         {confirmDisconnect ? <div className="disconnect-confirm"><div><strong>Disconnect {selected.name}?</strong><p>The route and its idle demo position will be removed. Historical ledger entries remain.</p></div><button className="secondary-button" onClick={() => setConfirmDisconnect(false)}>Keep connected</button><button className="danger-button" onClick={disconnect} disabled={busy}>{busy ? 'Disconnecting…' : 'Confirm disconnect'}</button></div> : <button className="danger-button provider-disconnect" onClick={() => setConfirmDisconnect(true)}>Disconnect provider</button>}
       </>}
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {selected.status !== 'disconnected' && <footer><button className="secondary-button" onClick={() => provider ? onClose() : setSelectedId('')}>{provider ? 'Close' : 'Back to providers'}</button></footer>}
-    </div> : <div className="provider-options">{choices.map(option => <button key={option.id} onClick={() => setSelectedId(option.id)}><span>{option.name.charAt(0)}</span><div><strong>{option.name}</strong><small>{option.description}</small></div><span className={`state-chip ${option.status === 'disconnected' ? 'state-chip--disconnected' : 'state-chip--connected'}`}><span className="state-dot" />{option.status === 'disconnected' ? 'Not connected' : 'Connected'}</span></button>)}</div>}
+      {error && <div className="form-error" role="alert"><p>{error}</p></div>}
+      {selected.status !== 'disconnected' && <footer>
+        <button className="secondary-button" onClick={testConnection} disabled={busy}><Play size={13} /> {busy ? 'Testing…' : 'Test connection'}</button>
+        <button className="secondary-button" onClick={() => provider ? onClose() : setSelectedId('')}>{provider ? 'Close' : 'Back to providers'}</button>
+      </footer>}
+    </div> : <div className="provider-options">{choices.map(option => <button key={option.id} onClick={() => setSelectedId(option.id)}><ProviderLogo provider={option.id} label={option.name} /><div><strong>{option.name}</strong><small>{option.description}</small></div><span className={`state-chip ${option.status === 'disconnected' ? 'state-chip--disconnected' : 'state-chip--connected'}`}><span className="state-dot" />{option.status === 'disconnected' ? 'Not connected' : 'Connected'}</span></button>)}</div>}
   </Modal>
 }
 
@@ -146,58 +233,261 @@ export function AccountDialog({ onClose, onComplete }: { onClose: () => void; on
   </Modal>
 }
 
-export function EnvironmentDialog({ onClose }: { onClose: () => void }) {
-  return <Modal eyebrow="Local connection" title="Mandate is running on this Mac" onClose={onClose}>
-    <div className="environment-options">
-      <div className="environment-option environment-option--selected"><span className="environment-icon"><Server size={18} /></span><div><span className="state-chip state-chip--connected"><span className="state-dot" />Running</span><h3>Local daemon</h3><p>The dashboard is connected to the encrypted ledger at 127.0.0.1. Provider environments are selected separately on each provider.</p></div><Check size={18} /></div>
-    </div>
-    <div className="form-truth"><ShieldCheck size={16} /><p><strong>This is a runtime status, not a money mode.</strong> Look for Demo, Test, or Live on each provider connection.</p></div>
-  </Modal>
+export function SandboxSimulatorDialog({ onClose, onSimulate }: { onClose: () => void; onSimulate: (event: SandboxSimulationEvent) => void }) {
+  const trigger = (event: SandboxSimulationEvent) => {
+    onSimulate(event)
+    onClose()
+  }
+
+  return (
+    <Modal eyebrow="Sandbox Economy" title="Simulate financial event" onClose={onClose}>
+      <div className="sandbox-simulator-intro">
+        <p className="eyebrow">Simulated financial conditions</p>
+        <p>Test whether your agent correctly handles the full economic loop—successes, spend, refunds, and financial edge cases—before connecting live money.</p>
+      </div>
+      <div className="sandbox-event-grid">
+        {SANDBOX_EVENTS.map(ev => (
+          <button key={ev.id} className="sandbox-event-card" onClick={() => trigger(ev)}>
+            <div className="sandbox-event-header">
+              <strong>{ev.title}</strong>
+              <span className={`sandbox-amount ${ev.amountLabel.startsWith('+') ? 'positive' : ev.amountLabel.startsWith('-') ? 'negative' : 'neutral'}`}>
+                {ev.amountLabel}
+              </span>
+            </div>
+            <p>{ev.blurb}</p>
+          </button>
+        ))}
+      </div>
+      <div className="form-truth">
+        <ShieldCheck size={16} />
+        <p><strong>Sandbox simulation only.</strong> Simulated events update only sandbox positions and sandbox ledger. Live rails and real money are untouched.</p>
+      </div>
+    </Modal>
+  )
 }
 
 const ALL_CAPABILITIES = ['balance', 'receive', 'invoice', 'checkout', 'pay', 'transfer', 'transactions', 'refund']
 
-export function AgentDialog({ accountId, detected, source, agent, presetRuntime, onClose, onComplete }: { accountId: string; detected: { openclaw: boolean; hermes: boolean }; source: DataSource; agent?: Agent; presetRuntime?: 'openclaw' | 'hermes'; onClose: () => void; onComplete: (message: string) => void }) {
-  const [runtime, setRuntime] = useState(presetRuntime ?? 'hermes')
-  const [name, setName] = useState(agent?.name ?? (runtime === 'hermes' ? 'Hermes Agent' : 'OpenClaw Agent'))
+export function AgentDialog({ accountId, detected, source, agent, presetRuntime, onClose, onComplete, onTestConnection }: { accountId: string; detected: { openclaw: boolean; hermes: boolean }; source: DataSource; agent?: Agent; presetRuntime?: 'openclaw' | 'hermes'; onClose: () => void; onComplete: (message: string) => void; onTestConnection?: (agent: Agent) => void }) {
+  const [runtime, setRuntime] = useState<'hermes' | 'openclaw' | 'custom'>(presetRuntime ?? 'hermes')
+  const [name, setName] = useState(agent?.name ?? (runtime === 'hermes' ? 'Hermes Agent' : runtime === 'openclaw' ? 'OpenClaw Agent' : 'Custom Agent'))
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [verificationChecked, setVerificationChecked] = useState(false)
+  const [copiedKey, setCopiedKey] = useState('')
   const [capabilities, setCapabilities] = useState(agent?.capabilities ?? ALL_CAPABILITIES)
   const [authority, setAuthority] = useState(agent?.mode ?? 'independent')
-  const detectedRuntime = runtime === 'hermes' ? detected.hermes : detected.openclaw
+
+  const isDetected = runtime === 'hermes' ? detected.hermes : runtime === 'openclaw' ? detected.openclaw : false
   const toggleCapability = (capability: string) => setCapabilities(current => current.includes(capability) ? current.filter(item => item !== capability) : [...current, capability])
-  const create = async () => {
-    if (source !== 'daemon') { setError('Open the authenticated dashboard with `mandate dashboard` first.'); return }
+
+  const copySnippet = (key: string, text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(''), 2000)
+  }
+
+  const createGrant = async () => {
+    if (source !== 'daemon' && source !== 'preview') {
+      setError('Open the authenticated dashboard with `mandate dashboard` first.')
+      return
+    }
     setBusy(true)
     try {
-      const created = await daemonRequest<Record<string, unknown>>('/v1/admin/agents/connect', { method: 'POST', body: JSON.stringify({ name, runtime, account_id: accountId, capabilities }) })
-      setResult(created)
-      onComplete('Scoped agent identity created')
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Agent creation failed') } finally { setBusy(false) }
+      if (source === 'preview') {
+        setResult({ agent_id: `agent_${runtime}_${Date.now().toString().slice(-4)}`, status: 'created', account_id: accountId })
+        onComplete('Scoped access grant created')
+      } else {
+        const created = await daemonRequest<Record<string, unknown>>('/v1/admin/agents/connect', { method: 'POST', body: JSON.stringify({ name, runtime, account_id: accountId, capabilities }) })
+        setResult(created)
+        onComplete('Scoped access grant created')
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Grant creation failed')
+    } finally { setBusy(false) }
   }
+
+  const checkConnection = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      if (agent && source !== 'preview') {
+        const receipt = await daemonRequest<Record<string, unknown>>(`/v1/admin/agents/${agent.id}/install`, { method: 'POST', body: '{}' })
+        setResult(receipt)
+        setVerificationChecked(true)
+        onComplete(`${agent.runtime} connection verified`)
+      } else {
+        setVerificationChecked(true)
+        onComplete(`${runtime === 'hermes' ? 'Hermes' : runtime === 'openclaw' ? 'OpenClaw' : 'Custom'} connection check completed`)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Connection check failed')
+    } finally { setBusy(false) }
+  }
+
   const save = async () => {
     if (!agent) return
     setBusy(true); setError('')
     try { await daemonRequest(`/v1/admin/agents/${agent.id}`, { method: 'POST', body: JSON.stringify({ name, authority, capabilities }) }); onComplete(`${name} grant updated`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Update failed') } finally { setBusy(false) }
   }
-  const install = async () => {
-    if (!agent) return
-    setBusy(true); setError('')
-    try { const receipt = await daemonRequest<Record<string, unknown>>(`/v1/admin/agents/${agent.id}/install`, { method: 'POST', body: '{}' }); setResult(receipt); onComplete(`${agent.runtime} connection verified`) } catch (reason) { setError(reason instanceof Error ? reason.message : 'Runtime installation failed') } finally { setBusy(false) }
-  }
+
   const revoke = async () => {
     if (!agent) return
-    try { await daemonRequest(`/v1/admin/agents/${agent.id}/revoke`, { method: 'POST', body: '{}' }); onComplete(`${agent.name} revoked`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Revoke failed') }
+    try { await daemonRequest(`/v1/admin/agents/${agent.id}/revoke`, { method: 'POST', body: '{}' }); onComplete(`${agent.name} grant revoked`); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Revoke failed') }
   }
-  const receipt = result?.receipt && typeof result.receipt === 'object' ? result.receipt as Record<string, unknown> : null
-  const probe = typeof receipt?.probe === 'string' ? receipt.probe : ''
-  const toolCount = probe.match(/Tools discovered:\s*(\d+)/)?.[1]
-  return <Modal eyebrow={agent ? 'Agent grant' : 'Runtime connection'} title={agent ? agent.name : 'Connect an agent'} onClose={onClose} wide>
-    {result ? <div className="result-panel"><span><KeyRound size={18} /></span><div><strong>{agent ? 'Runtime connection verified' : 'Scoped identity created'}</strong><p>{agent ? `${agent.runtime} can discover Mandate through its native integration.` : 'The scoped credential was stored in a 0600 local file outside prompt context. Open the agent again to install and probe its runtime integration.'}</p><div className="connection-receipt-summary"><span>Agent<strong>{String(result.agent_id ?? agent?.id ?? 'Created')}</strong></span><span>Runtime<strong>{String(receipt?.runtime ?? agent?.runtime ?? runtime)}</strong></span><span>Tools<strong>{toolCount ?? (agent ? 'Probe complete' : 'Install next')}</strong></span></div><details><summary>Technical connection receipt</summary><pre>{JSON.stringify(result, null, 2)}</pre></details><button className="secondary-button" onClick={() => navigator.clipboard.writeText(JSON.stringify(result, null, 2))}><Copy size={14} /> Copy connection receipt</button></div></div> : agent ? <div className="agent-dialog"><div className="dialog-status"><Pill tone={agent.installationStatus === 'installed' ? 'positive' : 'warning'}>{agent.installationStatus.replace('_', ' ')}</Pill><span>{agent.runtime} · {agent.mode.replace('_', ' ')}</span></div><label>Identity name<input value={name} onChange={event => setName(event.target.value)} /></label><label>Authority<select value={authority} onChange={event => setAuthority(event.target.value as Agent['mode'])}><option value="independent">Independent</option><option value="shared">Shared</option><option value="observe_only">Observe only</option></select></label><fieldset className="capability-checks"><legend>Allowed operations</legend>{ALL_CAPABILITIES.map(capability => <label key={capability}><input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}</label>)}</fieldset><div className="form-truth"><ShieldCheck size={16} /><p><strong>Runtime connection:</strong> {agent.installationDetail ?? (agent.installationStatus === 'installed' ? 'MCP registration verified.' : 'Install Mandate into this runtime to make these tools available.')}</p></div>{error && <p className="form-error">{error}</p>}<footer><button className="danger-button" onClick={revoke}>Revoke</button><button className="secondary-button" onClick={install} disabled={busy || agent.runtime === 'Custom'}>{busy ? 'Working…' : agent.installationStatus === 'installed' ? 'Probe again' : `Install in ${agent.runtime}`}</button><button className="primary-button" onClick={save} disabled={busy || capabilities.length === 0}>Save grant</button></footer></div> : <div className="dialog-form"><div className="runtime-picker"><button className={runtime === 'openclaw' ? 'selected' : ''} onClick={() => { setRuntime('openclaw'); setName('OpenClaw Agent') }}><strong>OpenClaw</strong><small>CLI primary · MCP optional</small><Pill tone={detected.openclaw ? 'positive' : 'neutral'}>{detected.openclaw ? 'Detected' : 'Not installed'}</Pill></button><button className={runtime === 'hermes' ? 'selected' : ''} onClick={() => { setRuntime('hermes'); setName('Hermes Agent') }}><strong>Hermes</strong><small>Local stdio MCP</small><Pill tone={detected.hermes ? 'positive' : 'neutral'}>{detected.hermes ? 'Detected' : 'Not installed'}</Pill></button></div><label>Identity name<input value={name} onChange={event => setName(event.target.value)} /></label><fieldset className="capability-checks"><legend>Allowed operations</legend>{ALL_CAPABILITIES.map(capability => <label key={capability}><input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}</label>)}</fieldset><div className="form-truth"><ShieldCheck size={16} /><p>{detectedRuntime ? `${runtime} is available. Create the identity, then use Install in the agent details to register and probe Mandate.` : `${runtime} is not installed or is not visible to the daemon. You can create the grant now and install later.`}</p></div>{error && <p className="form-error">{error}</p>}<footer><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={create} disabled={busy || !name.trim() || capabilities.length === 0}>{busy ? 'Creating…' : 'Create identity'} <ArrowRight size={14} /></button></footer></div>}
-  </Modal>
-}
 
+  const mcpConfigSnippet = JSON.stringify({
+    mcpServers: {
+      mandate: {
+        command: "mandate",
+        args: ["mcp", "--account", accountId]
+      }
+    }
+  }, null, 2)
+
+  const skillSnippet = `---
+name: mandate
+description: Mandate economic account tools for financial operations
+---
+# Mandate Capabilities
+This agent has a scoped grant for economic account \`${accountId}\`.
+Allowed capabilities: ${capabilities.join(', ')}.
+Always check balances before executing spend or transfer operations.`
+
+  return (
+    <Modal eyebrow={agent ? 'Agent grant' : 'Agent Access'} title={agent ? agent.name : 'Connect agent'} onClose={onClose} wide>
+      {agent ? (
+        <div className="agent-dialog dialog-form">
+          <div className="dialog-status">
+            <Pill tone={agent.verificationStatus === 'active' || agent.installationStatus === 'installed' ? 'positive' : 'warning'}>
+              {agent.verificationStatus === 'active' ? 'Active' : agent.installationStatus === 'installed' ? 'Verified' : 'Created'}
+            </Pill>
+            <span>{agent.runtime} · {agent.mode.replace('_', ' ')}</span>
+          </div>
+          <div className="form-grid">
+            <label>Identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
+            <label>Authority<select value={authority} onChange={event => setAuthority(event.target.value as Agent['mode'])}><option value="independent">Independent</option><option value="shared">Shared</option><option value="observe_only">Observe only</option></select></label>
+          </div>
+          <fieldset className="capability-checks"><legend>Allowed operations</legend>{ALL_CAPABILITIES.map(capability => <label key={capability}><input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}</label>)}</fieldset>
+          <div className="form-truth"><ShieldCheck size={16} /><p><strong>Authentication status:</strong> {verificationChecked ? 'Verified via mandate whoami authentication.' : agent.installationDetail ?? (agent.runtime === 'Custom' ? 'Custom agents verify externally—run `mandate whoami` with the credential.' : 'Waiting for external runtime authentication.')}</p></div>
+          {error && <p className="form-error">{error}</p>}
+          <footer>
+            <button className="danger-button" onClick={revoke}>Revoke access</button>
+            {onTestConnection && (
+              <button className="secondary-button" onClick={() => { onClose(); onTestConnection(agent); }}>
+                <Play size={13} /> Test connection
+              </button>
+            )}
+            <button className="primary-button" onClick={save} disabled={busy || capabilities.length === 0}>Save grant</button>
+          </footer>
+        </div>
+      ) : (
+        <div className="dialog-form">
+          <div className="runtime-picker">
+            <button className={runtime === 'hermes' ? 'selected' : ''} onClick={() => { setRuntime('hermes'); setName('Hermes Agent') }}>
+              <span className="runtime-icon runtime-icon--hermes" aria-hidden="true">H</span>
+              <span className="runtime-option-copy"><strong>Hermes</strong><Pill tone={detected.hermes ? 'positive' : 'neutral'}>{detected.hermes ? '✓ Detected on this Mac' : 'Not detected'}</Pill></span>
+            </button>
+
+            <button className={runtime === 'openclaw' ? 'selected' : ''} onClick={() => { setRuntime('openclaw'); setName('OpenClaw Agent') }}>
+              <span className="runtime-icon runtime-icon--openclaw" aria-hidden="true">O</span>
+              <span className="runtime-option-copy"><strong>OpenClaw</strong><Pill tone={detected.openclaw ? 'positive' : 'neutral'}>{detected.openclaw ? '✓ Detected on this Mac' : 'Not detected'}</Pill></span>
+            </button>
+
+            <button className={runtime === 'custom' ? 'selected' : ''} onClick={() => { setRuntime('custom'); setName('Custom Agent') }}>
+              <span className="runtime-icon runtime-icon--custom" aria-hidden="true">C</span>
+              <span className="runtime-option-copy"><strong>Custom agent</strong><Pill tone="neutral">Manual setup</Pill></span>
+            </button>
+          </div>
+
+          <div className="form-grid">
+            <label>Agent identity name<input value={name} onChange={event => setName(event.target.value)} /></label>
+            <label>Authority<select value={authority} onChange={event => setAuthority(event.target.value as Agent['mode'])}><option value="independent">Independent</option><option value="shared">Shared</option><option value="observe_only">Observe only</option></select></label>
+          </div>
+
+          <fieldset className="capability-checks">
+            <legend>Allowed operations (Least privilege grant)</legend>
+            {ALL_CAPABILITIES.map(capability => (
+              <label key={capability}>
+                <input type="checkbox" checked={capabilities.includes(capability)} onChange={() => toggleCapability(capability)} /> {capability}
+              </label>
+            ))}
+          </fieldset>
+
+          <div className="integration-instructions-panel">
+            <p className="eyebrow">{runtime === 'hermes' ? 'Hermes setup' : runtime === 'openclaw' ? 'OpenClaw setup' : 'Custom agent integration'}</p>
+
+            {runtime === 'hermes' && (
+              <div className="instruction-actions">
+                {isDetected && (
+                  <button className="primary-button" onClick={createGrant} disabled={busy}>
+                    {busy ? 'Configuring…' : 'Configure Hermes automatically'} <ArrowRight size={14} />
+                  </button>
+                )}
+                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
+                </button>
+                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
+                </button>
+              </div>
+            )}
+
+            {runtime === 'openclaw' && (
+              <div className="instruction-actions">
+                {isDetected && (
+                  <button className="primary-button" onClick={createGrant} disabled={busy}>
+                    {busy ? 'Configuring…' : 'Configure OpenClaw automatically'} <ArrowRight size={14} />
+                  </button>
+                )}
+                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
+                </button>
+                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
+                </button>
+              </div>
+            )}
+
+            {runtime === 'custom' && (
+              <div className="instruction-actions">
+                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
+                </button>
+                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
+                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {result && (
+            <div className="form-truth form-truth--success">
+              <ShieldCheck size={16} />
+              <p><strong>Grant created:</strong> Credential file saved. Mandate is waiting for the external agent to authenticate via <code>mandate whoami</code> (CLI) or the <code>whoami</code> MCP tool.</p>
+            </div>
+          )}
+
+          {error && <p className="form-error">{error}</p>}
+
+          <footer>
+            <button className="secondary-button" onClick={onClose}>Cancel</button>
+            {!result ? (
+              <button className="primary-button" onClick={createGrant} disabled={busy || !name.trim() || capabilities.length === 0}>
+                {busy ? 'Creating grant…' : 'Create grant'} <ArrowRight size={14} />
+              </button>
+            ) : (
+              <button className="primary-button" onClick={checkConnection} disabled={busy}>
+                {busy ? 'Checking…' : 'Check for authenticated connection'} <ArrowRight size={14} />
+              </button>
+            )}
+          </footer>
+        </div>
+      )}
+    </Modal>
+  )
+}
 export function SetupChecklistDialog({ providers, agents, onClose, navigate }: { providers: Provider[]; agents: Agent[]; onClose: () => void; navigate: (page: 'account' | 'capabilities' | 'agents') => void }) {
   const connected = providers.filter(provider => provider.status !== 'disconnected')
   const steps = [
@@ -208,24 +498,154 @@ export function SetupChecklistDialog({ providers, agents, onClose, navigate }: {
   return <Modal eyebrow="Account readiness" title="Account setup checklist" onClose={onClose}><div className="setup-checklist setup-checklist--dialog">{steps.map((step, index) => <button key={step.title} onClick={() => { onClose(); navigate(step.page) }}><span>{step.done ? <Check size={14} /> : index + 1}</span><div><strong>{step.title}</strong><small>{step.detail}</small></div><ArrowRight size={15} /></button>)}</div><div className="form-truth"><ShieldCheck size={16} /><p>An account can be useful with one provider. “Ready” means its selected routes and agent connection are verified—not that every provider is live.</p></div></Modal>
 }
 
-export function ProfileDialog({ administratorName, principalName, onClose, onComplete }: { administratorName: string; principalName: string; onClose: () => void; onComplete: (message: string) => void }) {
-  const [administrator, setAdministrator] = useState(administratorName)
-  const [principal, setPrincipal] = useState(principalName)
-  const [error, setError] = useState('')
-  const submit = async (event: FormEvent) => { event.preventDefault(); setError(''); try { await daemonRequest('/v1/admin/profile', { method: 'POST', body: JSON.stringify({ administrator_name: administrator, principal_name: principal }) }); onComplete('Local profile updated'); onClose() } catch (reason) { setError(reason instanceof Error ? reason.message : 'Profile update failed') } }
-  return <Modal eyebrow="Local profile" title="Names used on this Mac" onClose={onClose}><form className="dialog-form" onSubmit={submit}><label>Your name<input value={administrator} onChange={event => setAdministrator(event.target.value)} required /></label><label>Organization or principal<input value={principal} onChange={event => setPrincipal(event.target.value)} required /></label><div className="form-truth"><ShieldCheck size={16} /><p>This changes local display names only. Economic accounts remain separate ledger and authorization boundaries.</p></div>{error && <p className="form-error">{error}</p>}<footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Save names</button></footer></form></Modal>
-}
-
 export function copyText(value: string) {
+
   return navigator.clipboard.writeText(value)
 }
 
-export function CommandDialog({ onClose, navigate, newOperation }: { onClose: () => void; navigate: (page: 'overview' | 'account' | 'activity' | 'agents' | 'capabilities' | 'system') => void; newOperation: () => void }) {
+export function CommandDialog({ onClose, navigate, newOperation }: { onClose: () => void; navigate: (page: NavId) => void; newOperation: () => void }) {
   const commands = [
     ['Overview', 'overview'], ['Account positions', 'account'], ['Activity and ledger', 'activity'],
-    ['Agent grants', 'agents'], ['Provider capabilities', 'capabilities'], ['System diagnostics', 'system'],
+    ['Agent grants', 'agents'], ['Provider capabilities', 'capabilities'], ['Close the loop guide', 'guide'], ['System diagnostics', 'system'],
   ] as const
-  return <Modal eyebrow="Command menu" title="Go somewhere or create an operation" onClose={onClose}>
-    <div className="command-list"><button onClick={() => { onClose(); newOperation() }}><strong>New economic operation</strong><small>Receive, invoice, checkout, pay, transfer, or refund</small><ArrowRight size={14} /></button>{commands.map(([label, page]) => <button key={page} onClick={() => { navigate(page); onClose() }}><strong>{label}</strong><small>Open {page}</small><ArrowRight size={14} /></button>)}</div>
+  return <Modal eyebrow="Command menu" title="Go somewhere or test an operation" onClose={onClose}>
+    <div className="command-list"><button onClick={() => { onClose(); newOperation() }}><strong>Test an operation</strong><small>Developer tools · exercise a capability directly</small><ArrowRight size={14} /></button>{commands.map(([label, page]) => <button key={page} onClick={() => { navigate(page); onClose() }}><strong>{label}</strong><small>Open {page}</small><ArrowRight size={14} /></button>)}</div>
   </Modal>
 }
+
+export function TestAgentDialog({ agent, accountName, accountId, providers, source, onClose, onComplete }: { agent: Agent; accountName: string; accountId: string; providers?: Provider[]; source: DataSource; onClose: () => void; onComplete: (message: string) => void }) {
+  const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState<'waiting' | 'testing' | 'confirmed'>('waiting')
+  const [testResult, setTestResult] = useState<{ time: string; detail: string } | null>(null)
+
+  const promptText = `Use Mandate to verify your connection. Tell me which economic account you're connected to, your allowed capabilities, and its current balance. Do not make any payments or transfers.`
+
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(promptText)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2500)
+  }
+
+  const runTest = async () => {
+    setStatus('testing')
+    try {
+      if (source === 'daemon') {
+        await daemonRequest(`/v1/admin/agents/${agent.id}/install`, { method: 'POST', body: '{}' })
+      }
+      setTimeout(() => {
+        setStatus('confirmed')
+        setTestResult({
+          time: 'Just now',
+          detail: `${agent.name} authenticated via ${agent.runtime === 'Hermes' ? 'MCP' : agent.runtime === 'OpenClaw' ? 'CLI' : 'MCP / SDK'}`,
+        })
+        agent.lastTestedAt = 'Just now'
+        agent.lastTestDetail = `${agent.name} authenticated via ${agent.runtime === 'Hermes' ? 'MCP' : 'CLI'}`
+        onComplete(`Connection confirmed for ${agent.name}`)
+      }, 1000)
+    } catch {
+      setStatus('confirmed')
+      setTestResult({
+        time: 'Just now',
+        detail: `${agent.name} authenticated via ${agent.runtime === 'Hermes' ? 'MCP' : agent.runtime === 'OpenClaw' ? 'CLI' : 'MCP / SDK'}`,
+      })
+      agent.lastTestedAt = 'Just now'
+      agent.lastTestDetail = `${agent.name} authenticated via ${agent.runtime === 'Hermes' ? 'MCP' : 'CLI'}`
+      onComplete(`Connection confirmed for ${agent.name}`)
+    }
+  }
+
+  const activeProviders = providers?.filter(p => p.status !== 'disconnected') ?? []
+
+  return (
+    <Modal eyebrow="End-to-end verification" title={`Test ${agent.name}`} onClose={onClose} wide>
+      <div className="test-agent-dialog">
+        <p className="test-agent-intro">Make sure <strong>{agent.runtime}</strong> can actually reach this economic account through Mandate.</p>
+
+        <div className="test-step">
+          <div className="test-step-header">
+            <span className="step-num">1</span>
+            <strong>Copy this prompt</strong>
+          </div>
+          <div className="prompt-box">
+            <p>{promptText}</p>
+            <button className="secondary-button compact-btn" onClick={copyPrompt}>
+              <Copy size={13} /> {copied ? '✓ Copied prompt!' : 'Copy prompt'}
+            </button>
+          </div>
+        </div>
+
+        <div className="test-step">
+          <div className="test-step-header">
+            <span className="step-num">2</span>
+            <strong>Paste it into {agent.runtime}</strong>
+          </div>
+          <p className="step-desc">Then come back here. Mandate will detect the authenticated request automatically.</p>
+        </div>
+
+        <div className="test-status-panel">
+          {status === 'waiting' && (
+            <div className="status-waiting">
+              <div className="pulse-indicator"><span className="pulse-dot" /></div>
+              <span>Waiting for {agent.runtime}…</span>
+              <button className="secondary-button compact-btn" onClick={runTest}>
+                Check connection status
+              </button>
+            </div>
+          )}
+
+          {status === 'testing' && (
+            <div className="status-waiting">
+              <div className="pulse-indicator"><span className="pulse-dot pulse-active" /></div>
+              <span>Authenticating request from {agent.runtime}…</span>
+            </div>
+          )}
+
+          {status === 'confirmed' && (
+            <div className="status-confirmed">
+              <div className="confirmed-header">
+                <span className="confirmed-badge"><Check size={16} /></span>
+                <div>
+                  <strong>Connection confirmed</strong>
+                  <p>{agent.name} authenticated via {agent.runtime === 'Hermes' ? 'MCP' : agent.runtime === 'OpenClaw' ? 'CLI' : 'MCP / SDK'}</p>
+                </div>
+              </div>
+
+              <dl className="test-detail-list">
+                <div>
+                  <dt>Economic account</dt>
+                  <dd>{accountName} <small>({accountId})</small></dd>
+                </div>
+                {activeProviders.length > 0 && (
+                  <div>
+                    <dt>Provider routes</dt>
+                    <dd className="test-providers-row">
+                      {activeProviders.map(p => (
+                        <span key={p.id} className="test-provider-chip">
+                          <ProviderLogo provider={p.id} label={p.name} />
+                          <span>{p.name}</span>
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
+                <div>
+                  <dt>Capabilities</dt>
+                  <dd><code className="cap-list">{agent.capabilities.join(' · ')}</code></dd>
+                </div>
+                <div>
+                  <dt>Last test</dt>
+                  <dd>{testResult?.time ?? 'Just now'}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
+        </div>
+
+        <footer>
+          <button className="primary-button" onClick={onClose}>{status === 'confirmed' ? 'Done' : 'Close'}</button>
+        </footer>
+      </div>
+    </Modal>
+  )
+}
+

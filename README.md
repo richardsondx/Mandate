@@ -62,10 +62,16 @@ Start the daemon:
 cargo run -p mandated
 ```
 
+Build the frontend:
+
+```bash
+npm --prefix web run build
+```
+
 On the first run, open `http://127.0.0.1:7741/`. Mandate asks for the
-administrator name, organization/principal, and first economic account. Choose
-**Start empty** for the real zero-state setup or **Add demo routes** for an
-explicit deterministic demonstration. Browser setup is required only once.
+name of your first economic account. Choose **Start empty** for the real
+zero-state setup or **Add demo routes** for an explicit deterministic
+demonstration. Browser setup is required only once.
 
 To repeat the genuine first-run experience during development, use the guarded
 reset helper. It stops only a process identified as `mandated`, moves the full
@@ -117,6 +123,21 @@ Run the dashboard with Vite only when developing frontend code:
 pnpm dev:web
 ```
 
+For a smoother loop, run the daemon and Vite together with one command and open
+`http://127.0.0.1:5173/` (Vite hot-reloads frontend edits and proxies `/v1` to
+the daemon). Ctrl-C stops both cleanly:
+
+```bash
+pnpm dev:dashboard
+```
+
+If you instead want the single-port daemon at `:7741` to stay current without a
+manual rebuild, keep a watched build running in another terminal:
+
+```bash
+pnpm build:web:watch
+```
+
 Open the authenticated dashboard with `cargo run -p mandate -- dashboard` (or
 `mandate dashboard` after installation). The CLI requests a 60-second,
 single-use login URL; the daemon exchanges it for an HttpOnly local session.
@@ -152,16 +173,16 @@ The user-usable acceptance boundary is in [the completion brief](docs/COMPLETION
 
 ## Accounts and agents
 
-One principal can own multiple economic accounts. Each account has independent
-provider connections, positions, reservations, journal entries, and grants.
-Multiple OpenClaw, Hermes, or custom agents may share one account, but every
-agent uses its own scoped credential. Create separate accounts whenever funds,
-provider routes, permissions, or audit history should not be shared.
+A single local operator owns one or more economic accounts. Each account has
+independent provider connections, positions, reservations, journal entries,
+and grants. Multiple OpenClaw, Hermes, or custom agents may share one account,
+but every agent uses its own scoped credential. Create separate accounts
+whenever funds, provider routes, permissions, or audit history should not be
+shared.
 
-The bottom-left profile is the human operator for this local instance; it is
-not another economic account. Rename the operator or principal from **Edit
-local profile**. Create and switch economic accounts only from the account
-switcher at the top of the sidebar.
+The bottom-left **LOCAL OPERATOR** menu is the human operator for this local
+instance; it is not another economic account. Create and switch economic
+accounts only from the account switcher at the top of the sidebar.
 
 ## Agent interfaces
 

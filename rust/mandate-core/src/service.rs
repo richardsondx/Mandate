@@ -17,7 +17,6 @@ pub struct MandateService {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct InitResult {
-    pub principal: Principal,
     pub account: EconomicAccount,
     pub admin_token: String,
 }
@@ -122,8 +121,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
 "#).map_err(db_err)
     }
 
-    pub fn initialize(&self, name: &str) -> Result<InitResult, ApiError> {
-        self.initialize_instance(name, name, "Primary treasury", true)
+    pub fn initialize(&self) -> Result<InitResult, ApiError> {
+        self.initialize_instance("Primary treasury", true)
     }
 
     pub fn is_initialized(&self) -> Result<bool, ApiError> {
@@ -136,19 +135,12 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
 
     pub fn initialize_instance(
         &self,
-        administrator_name: &str,
-        organization_name: &str,
         account_name: &str,
         demo: bool,
     ) -> Result<InitResult, ApiError> {
-        let administrator_name = administrator_name.trim();
-        let organization_name = organization_name.trim();
         let account_name = account_name.trim();
-        if administrator_name.is_empty() || organization_name.is_empty() || account_name.is_empty()
-        {
-            return Err(ApiError::invalid(
-                "administrator, organization, and account names are required",
-            ));
+        if account_name.is_empty() {
+            return Err(ApiError::invalid("account name is required"));
         }
         let mut conn = self.db.lock().unwrap();
         let tx = conn.transaction().map_err(db_err)?;
@@ -167,7 +159,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         }
         let principal = Principal {
             id: format!("prn_{}", Uuid::new_v4().simple()),
-            name: organization_name.into(),
+            name: "Local".into(),
         };
         let account = EconomicAccount {
             id: format!("acct_{}", Uuid::new_v4().simple()),
@@ -191,11 +183,6 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             params![hash_token(&token), principal.id, now],
         )
         .map_err(db_err)?;
-        tx.execute(
-            "INSERT INTO instance_settings(key,value) VALUES ('administrator_name',?1)",
-            [administrator_name],
-        )
-        .map_err(db_err)?;
         if demo {
             Self::connect_demo_provider_tx(&tx, &account.id, "coinbase-cdp-wallet")?;
             Self::connect_demo_provider_tx(&tx, &account.id, "stripe-revenue")?;
@@ -208,7 +195,6 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         )?;
         tx.commit().map_err(db_err)?;
         Ok(InitResult {
-            principal,
             account,
             admin_token: token,
         })
@@ -246,6 +232,75 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             ));
         }
         Ok(())
+    }
+
+    /// Introspect a credential token and return the caller's identity. Used by
+    /// the `GET /v1/me` endpoint so an agent can discover the economic account,
+    /// authority, and capabilities it is scoped to from its token alone.
+    pub fn introspect(&self, token: &str) -> Result<CallerIdentity, ApiError> {
+        let conn = self.db.lock().unwrap();
+        let row = conn
+            .query_row(
+                "SELECT subject_id,is_admin FROM credentials WHERE token_hash=?1 AND revoked_at IS NULL",
+                [hash_token(token)],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(ApiError::unauthorized)?;
+        if row.1 {
+            return Ok(CallerIdentity {
+                is_admin: true,
+                agent_id: None,
+                name: None,
+                runtime: None,
+                account_id: None,
+                account_name: None,
+                authority: None,
+                capabilities: None,
+                status: None,
+            });
+        }
+        let agent_id = row.0;
+        let grant = conn
+            .query_row(
+                "SELECT g.account_id,a.name,g.authority,g.capabilities,COALESCE(p.name,g.agent_id),COALESCE(p.runtime,'custom') FROM grants g JOIN economic_accounts a ON a.id=g.account_id LEFT JOIN agent_profiles p ON p.agent_id=g.agent_id WHERE g.agent_id=?1 AND g.revoked_at IS NULL",
+                [&agent_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(ApiError::unauthorized)?;
+        let (account_id, account_name, authority, capabilities, name, runtime) = grant;
+        let authority = match authority.as_str() {
+            "shared" => AuthorityMode::Shared,
+            "observeonly" | "observe_only" => AuthorityMode::ObserveOnly,
+            _ => AuthorityMode::Independent,
+        };
+        let caps: Vec<String> = serde_json::from_str::<BTreeSet<String>>(&capabilities)
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .into_iter()
+            .collect();
+        Ok(CallerIdentity {
+            is_admin: false,
+            agent_id: Some(agent_id),
+            name: Some(name),
+            runtime: Some(runtime),
+            account_id: Some(account_id),
+            account_name: Some(account_name),
+            authority: Some(authority),
+            capabilities: Some(caps),
+            status: Some("connected".into()),
+        })
     }
 
     pub fn list_accounts(&self) -> Result<Vec<EconomicAccount>, ApiError> {
@@ -301,33 +356,6 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         Ok(account)
     }
 
-    pub fn update_profile(&self, req: ProfileUpdateRequest) -> Result<(), ApiError> {
-        let administrator_name = req.administrator_name.trim();
-        let principal_name = req.principal_name.trim();
-        if administrator_name.is_empty() || principal_name.is_empty() {
-            return Err(ApiError::invalid(
-                "administrator and principal names are required",
-            ));
-        }
-        let mut conn = self.db.lock().unwrap();
-        let tx = conn.transaction().map_err(db_err)?;
-        tx.execute("UPDATE principals SET name=?1", [principal_name])
-            .map_err(db_err)?;
-        tx.execute(
-            "INSERT INTO instance_settings(key,value) VALUES ('administrator_name',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [administrator_name],
-        ).map_err(db_err)?;
-        Self::event_tx(
-            &tx,
-            "instance.profile_updated",
-            serde_json::json!({
-                "administrator_name": administrator_name,
-                "principal_name": principal_name
-            }),
-        )?;
-        tx.commit().map_err(db_err)
-    }
-
     fn connect_demo_provider_tx(
         tx: &Transaction<'_>,
         account_id: &str,
@@ -337,6 +365,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             "coinbase-cdp-wallet" => ("fake-treasury", "USDC", "base-sepolia", "100000000", 6),
             "stripe-revenue" => ("fake-revenue", "USD", "", "0", 2),
             "lithic-card" => ("fake-card", "USD", "", "100000", 2),
+            "bridge-rail" => ("fake-bridge", "USD", "", "0", 2),
             _ => return Err(ApiError::invalid("unknown bundled provider")),
         };
         let exists: bool = tx
@@ -435,6 +464,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             "coinbase-cdp-wallet" => "fake-treasury",
             "stripe-revenue" => "fake-revenue",
             "lithic-card" => "fake-card",
+            "bridge-rail" => "fake-bridge",
             _ => return Err(ApiError::invalid("unknown bundled provider")),
         };
         let mut conn = self.db.lock().unwrap();
@@ -488,6 +518,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
     }
 
     pub fn create_agent(&self, req: AgentCreateRequest) -> Result<AgentCredential, ApiError> {
+        Self::validate_agent_capabilities(&req.capabilities)?;
         let conn = self.db.lock().unwrap();
         let agent_id = format!("agt_{}", Uuid::new_v4().simple());
         let token = random_token();
@@ -562,28 +593,8 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         if name.is_empty() {
             return Err(ApiError::invalid("agent name is required"));
         }
-        let allowed: BTreeSet<&str> = [
-            "balance",
-            "receive",
-            "invoice",
-            "checkout",
-            "pay",
-            "transfer",
-            "transactions",
-            "refund",
-        ]
-        .into_iter()
-        .collect();
         let capabilities: BTreeSet<String> = req.capabilities.into_iter().collect();
-        if capabilities.is_empty()
-            || capabilities
-                .iter()
-                .any(|capability| !allowed.contains(capability.as_str()))
-        {
-            return Err(ApiError::invalid(
-                "select at least one valid agent capability",
-            ));
-        }
+        Self::validate_agent_capabilities(&capabilities.iter().cloned().collect::<Vec<_>>())?;
         let mut conn = self.db.lock().unwrap();
         let tx = conn.transaction().map_err(db_err)?;
         let changed = tx.execute(
@@ -604,6 +615,20 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             serde_json::json!({"agent_id": agent_id, "capabilities": capabilities}),
         )?;
         tx.commit().map_err(db_err)
+    }
+
+    fn validate_agent_capabilities(capabilities: &[String]) -> Result<(), ApiError> {
+        let allowed: BTreeSet<&str> = CAPABILITY_IDS.iter().copied().collect();
+        if capabilities.is_empty()
+            || capabilities
+                .iter()
+                .any(|capability| !allowed.contains(capability.as_str()))
+        {
+            return Err(ApiError::invalid(
+                "select at least one valid agent capability",
+            ));
+        }
+        Ok(())
     }
 
     pub fn set_agent_installation(
@@ -701,7 +726,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             .lock()
             .unwrap()
             .query_row(
-                "SELECT COUNT(*) > 0 FROM provider_connections WHERE account_id=?1 AND provider_id=?2 AND status='connected'",
+                "SELECT COUNT(*) > 0 FROM provider_connections WHERE account_id=?1 AND provider_id=?2 AND status != 'disconnected'",
                 params![account_id, catalog_id],
                 |row| row.get(0),
             )
@@ -873,11 +898,14 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             expires_at: expires,
             created_at: now,
         };
-        Self::event_tx(
-            &tx,
-            &format!("{kind}.created"),
-            serde_json::to_value(&op).unwrap(),
-        )?;
+        let capability = match kind {
+            "receive_endpoint" => "receive",
+            "payment_session" => "pay",
+            other => other,
+        };
+        let mut payload = serde_json::to_value(&op).unwrap();
+        payload["capability"] = serde_json::Value::String(capability.into());
+        Self::event_tx(&tx, &format!("{kind}.created"), payload)?;
         tx.commit().map_err(db_err)?;
         Ok(op)
     }
@@ -1074,26 +1102,16 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
     }
 
     fn provider_catalog() -> Vec<ProviderStatus> {
-        vec![
-            ProviderStatus {
-                id: "coinbase-cdp-wallet".into(),
-                capabilities: vec!["balance".into(), "receive".into(), "transfer".into()],
+        capability_manifest()
+            .providers
+            .into_iter()
+            .map(|provider| ProviderStatus {
+                id: provider.id,
+                capabilities: provider.agent_capabilities,
                 state: "not_connected".into(),
                 mode: "none".into(),
-            },
-            ProviderStatus {
-                id: "stripe-revenue".into(),
-                capabilities: vec!["invoice".into(), "checkout".into(), "refund".into()],
-                state: "not_connected".into(),
-                mode: "none".into(),
-            },
-            ProviderStatus {
-                id: "lithic-card".into(),
-                capabilities: vec!["pay".into()],
-                state: "not_connected".into(),
-                mode: "none".into(),
-            },
-        ]
+            })
+            .collect()
     }
 
     pub fn providers_for(&self, account_id: &str) -> Vec<ProviderStatus> {
@@ -1111,10 +1129,12 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
                 .flatten();
             if let Some((mode, status)) = connection {
                 provider.mode = mode.clone();
-                provider.state = if status == "connected" && mode == "demo" {
-                    "sandbox".into()
-                } else if status == "verified" {
-                    "live_ready".into()
+                provider.state = if status == "connected" || status == "verified" {
+                    if mode == "live" {
+                        "live".into()
+                    } else {
+                        "sandbox".into()
+                    }
                 } else {
                     status
                 };
@@ -1123,36 +1143,285 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         catalog
     }
 
+    pub fn capabilities_for(
+        &self,
+        account_id: &str,
+        granted_capabilities: Option<&[String]>,
+    ) -> Result<CapabilityAvailabilityResponse, ApiError> {
+        let account_exists: bool = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM economic_accounts WHERE id=?1",
+                [account_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if !account_exists {
+            return Err(ApiError::not_found("economic account"));
+        }
+
+        let manifest = capability_manifest();
+        let providers = self.providers_for(account_id);
+        let capabilities = manifest
+            .capabilities
+            .into_iter()
+            .map(|definition| {
+                let granted = granted_capabilities
+                    .map(|grants| grants.iter().any(|grant| grant == &definition.id))
+                    .unwrap_or(true);
+                let provider_ids: Vec<String> = providers
+                    .iter()
+                    .filter(|provider| {
+                        matches!(provider.state.as_str(), "sandbox" | "live_ready" | "live")
+                            && provider
+                                .capabilities
+                                .iter()
+                                .any(|cap| cap == &definition.id)
+                    })
+                    .map(|provider| provider.id.clone())
+                    .collect();
+                let route_required = !definition.requires_provider_categories.is_empty();
+                let route_available = !route_required || !provider_ids.is_empty();
+                let environment = providers
+                    .iter()
+                    .find(|provider| provider_ids.contains(&provider.id))
+                    .map(|provider| {
+                        if provider.mode == "live" {
+                            "live".into()
+                        } else {
+                            "sandbox".into()
+                        }
+                    });
+                let unavailable_reason = if !granted {
+                    Some("This agent grant does not allow this capability.".into())
+                } else if !route_available {
+                    Some(format!(
+                        "Connect a {} provider to make this capability executable.",
+                        definition.requires_provider_categories.join(" or ")
+                    ))
+                } else {
+                    None
+                };
+                CapabilityAvailability {
+                    definition,
+                    granted,
+                    available: granted && route_available,
+                    provider_ids,
+                    environment,
+                    unavailable_reason,
+                }
+            })
+            .collect();
+        Ok(CapabilityAvailabilityResponse {
+            account_id: account_id.into(),
+            spec_version: manifest.spec_version,
+            updated_at: manifest.updated_at,
+            releases: manifest.releases,
+            capabilities,
+        })
+    }
+
+    /// Returns the stored mode (e.g. "demo", "sandbox", "live") for a single
+    /// provider connection, or `None` when the provider is not connected to the
+    /// given economic account. Used by the dashboard to decide whether to
+    /// surface redacted stored credentials.
+    pub fn provider_mode(
+        &self,
+        account_id: &str,
+        provider_id: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let conn = self.db.lock().unwrap();
+        let mode: Option<String> = conn
+            .query_row(
+                "SELECT mode FROM provider_connections WHERE account_id=?1 AND provider_id=?2",
+                params![account_id, provider_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(db_err)?;
+        Ok(mode)
+    }
+
+    pub fn evaluate_continuity(&self, account_id: &str) -> Result<ContinuityEvaluation, ApiError> {
+        let providers = self.providers_for(account_id);
+        let connected: Vec<_> = providers
+            .iter()
+            .filter(|p| p.state != "not_connected")
+            .map(|p| p.id.as_str())
+            .collect();
+
+        let has_stripe = connected.contains(&"stripe-revenue");
+        let has_coinbase = connected.contains(&"coinbase-cdp-wallet");
+        let has_lithic = connected.contains(&"lithic-card");
+        let has_bridge = connected.contains(&"bridge-rail");
+
+        let mut gaps = Vec::new();
+        let mut candidate_plans = Vec::new();
+        let mut reachable = Vec::new();
+
+        if has_stripe {
+            reachable.push("receive.stripe".into());
+        }
+        if has_coinbase {
+            reachable.push("hold.coinbase".into());
+        }
+        if has_lithic {
+            reachable.push("spend.lithic".into());
+        }
+
+        let loop_status = if has_stripe && has_coinbase && has_lithic {
+            if has_bridge {
+                "closed".into()
+            } else {
+                gaps.push("Revenue cannot currently reach Spend capability (missing Bridge liquidity route)".into());
+                candidate_plans.push(serde_json::json!({
+                    "title": "Bridge Virtual Account & Liquidation Route",
+                    "description": "Connect Bridge to bridge Stripe USD payouts to Coinbase USDC/Base and offramp USDC to Lithic USD collateral.",
+                    "legs": ["stripe_to_bridge_va", "bridge_liq_to_lithic"],
+                    "autonomous": true,
+                    "steps": 2
+                }));
+                "open".into()
+            }
+        } else if has_coinbase && !has_stripe && !has_lithic {
+            "closed".into()
+        } else if connected.is_empty() {
+            gaps.push("No provider routes connected yet".into());
+            "open".into()
+        } else {
+            if has_stripe && !has_bridge {
+                gaps.push("Stripe USD revenue has no route to Treasury".into());
+            }
+            if has_lithic && !has_bridge {
+                gaps.push("Treasury has no route to fund Lithic Card spend".into());
+            }
+            "open".into()
+        };
+
+        Ok(ContinuityEvaluation {
+            account_id: account_id.into(),
+            loop_status,
+            missing_routes_count: gaps.len(),
+            continuity_gaps: gaps,
+            candidate_plans,
+            reachable_capabilities: reachable,
+        })
+    }
+
+    pub fn quote_movement(&self, req: MovementQuoteRequest) -> Result<MovementQuote, ApiError> {
+        let quote_id = format!("mqt_{}", uuid::Uuid::new_v4().simple());
+        let leg = RouteLeg {
+            id: format!("leg_{}", uuid::Uuid::new_v4().simple()),
+            source: MoneyNodeRef::Position(format!("{}:{}", req.source_provider, req.asset)),
+            destination: MoneyNodeRef::Position(format!(
+                "{}:{}",
+                req.destination_provider, req.asset
+            )),
+            executor_provider_id: if req.source_provider == "stripe-revenue"
+                && req.destination_provider == "coinbase-cdp-wallet"
+            {
+                "bridge-rail".into()
+            } else {
+                req.source_provider.clone()
+            },
+            source_asset: AssetRef {
+                code: req.asset.clone(),
+                network: None,
+            },
+            destination_asset: AssetRef {
+                code: req.asset.clone(),
+                network: None,
+            },
+            capability: "money.fiat_to_stablecoin".into(),
+            environment: Environment::Sandbox,
+            execution_mode: RouteExecutionMode::AutomaticSettlement,
+            unattended_supported: true,
+        };
+
+        Ok(MovementQuote {
+            quote_id,
+            account_id: req.account_id,
+            input_amount: req.amount.clone(),
+            input_asset: AssetRef {
+                code: req.asset.clone(),
+                network: None,
+            },
+            expected_output_amount: req.amount,
+            output_asset: AssetRef {
+                code: req.asset,
+                network: None,
+            },
+            fees_atomic: AtomicAmount::new("0")?,
+            estimated_duration_seconds: 300,
+            expires_at: Utc::now() + chrono::Duration::minutes(15),
+            legs: vec![leg],
+            autonomous: true,
+            human_action_required: None,
+        })
+    }
+
+    pub fn execute_movement(&self, quote: MovementQuote) -> Result<MovementRecord, ApiError> {
+        let account_id = quote.account_id.clone();
+        let movement_id = format!("mov_{}", uuid::Uuid::new_v4().simple());
+        let now = Utc::now();
+        let record = MovementRecord {
+            id: movement_id,
+            account_id: account_id.clone(),
+            quote,
+            state: MovementState::Settled,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let conn = self.db.lock().unwrap();
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let tx_id = format!("tx_{}", uuid::Uuid::new_v4().simple());
+        let desc = format!(
+            "Autonomous money movement via {}",
+            record
+                .quote
+                .legs
+                .first()
+                .map(|l| l.executor_provider_id.as_str())
+                .unwrap_or("route")
+        );
+        tx.execute(
+            "INSERT INTO transactions (id,account_id,operation_id,description,asset,created_at) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![tx_id, account_id, record.id, desc, record.quote.input_asset.code, now.to_rfc3339()],
+        ).map_err(db_err)?;
+
+        tx.execute(
+            "INSERT INTO ledger_entries (transaction_id,account,amount_atomic) VALUES (?1,?2,?3)",
+            params![
+                tx_id,
+                format!(
+                    "positions:{}:USD",
+                    record
+                        .quote
+                        .legs
+                        .first()
+                        .map(|l| l.executor_provider_id.as_str())
+                        .unwrap_or("bridge")
+                ),
+                record.quote.input_amount.as_str()
+            ],
+        )
+        .map_err(db_err)?;
+
+        tx.commit().map_err(db_err)?;
+
+        Ok(record)
+    }
+
     pub fn dashboard_snapshot(
         &self,
         account_id: Option<&str>,
         runtimes: RuntimeDetection,
     ) -> Result<DashboardSnapshot, ApiError> {
-        let (principal, administrator_name, accounts, account, cursor) = {
+        let (accounts, account, cursor) = {
             let conn = self.db.lock().unwrap();
-            let principal = conn
-                .query_row(
-                    "SELECT id,name FROM principals ORDER BY created_at LIMIT 1",
-                    [],
-                    |r| {
-                        Ok(Principal {
-                            id: r.get(0)?,
-                            name: r.get(1)?,
-                        })
-                    },
-                )
-                .optional()
-                .map_err(db_err)?
-                .ok_or_else(|| ApiError::not_found("principal"))?;
-            let administrator_name = conn
-                .query_row(
-                    "SELECT value FROM instance_settings WHERE key='administrator_name'",
-                    [],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(db_err)?
-                .unwrap_or_else(|| principal.name.clone());
             let mut statement = conn
                 .prepare(
                     "SELECT id,principal_id,name FROM economic_accounts ORDER BY created_at,id",
@@ -1176,7 +1445,7 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
             let cursor = conn
                 .query_row("SELECT COALESCE(MAX(id),0) FROM outbox", [], |r| r.get(0))
                 .map_err(db_err)?;
-            (principal, administrator_name, accounts, account, cursor)
+            (accounts, account, cursor)
         };
 
         let agents = {
@@ -1244,13 +1513,12 @@ SELECT 'pcon_lithic_' || account_id,account_id,'lithic-card','demo','connected',
         };
 
         Ok(DashboardSnapshot {
-            principal,
-            administrator_name,
             accounts,
             balance: self.balance(&account.id)?,
             transactions: self.transactions(&account.id, 100)?,
             agents,
             providers: self.providers_for(&account.id),
+            capabilities: self.capabilities_for(&account.id, None)?,
             outbox_cursor: cursor,
             account,
             runtimes,
@@ -1362,7 +1630,7 @@ mod tests {
     #[test]
     fn journal_must_balance() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize("Test").unwrap();
+        let init = s.initialize().unwrap();
         assert_eq!(
             s.post_journal(
                 &init.account.id,
@@ -1388,7 +1656,7 @@ mod tests {
     #[test]
     fn idempotency_returns_same_operation() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize("Test").unwrap();
+        let init = s.initialize().unwrap();
         let request = MoneyRequest {
             account_id: init.account.id,
             amount: AtomicAmount::new("100").unwrap(),
@@ -1406,7 +1674,7 @@ mod tests {
     #[test]
     fn agent_is_scoped() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize("Test").unwrap();
+        let init = s.initialize().unwrap();
         let a = s
             .create_agent(AgentCreateRequest {
                 name: "worker".into(),
@@ -1432,7 +1700,7 @@ mod tests {
     #[test]
     fn payment_retry_reserves_once_and_revoke_releases() {
         let s = MandateService::in_memory().unwrap();
-        let init = s.initialize("Test").unwrap();
+        let init = s.initialize().unwrap();
         let req = PaymentSessionRequest {
             money: MoneyRequest {
                 account_id: init.account.id.clone(),
@@ -1486,7 +1754,7 @@ mod tests {
                 "a-test-key-that-is-definitely-longer-than-32-bytes",
             )
             .unwrap();
-            s.initialize("Encrypted").unwrap();
+            s.initialize().unwrap();
         }
         let bytes = std::fs::read(path).unwrap();
         assert_ne!(&bytes[..16], b"SQLite format 3\0");
@@ -1494,7 +1762,7 @@ mod tests {
     #[test]
     fn provider_events_are_deduplicated() {
         let s = MandateService::in_memory().unwrap();
-        s.initialize("Test").unwrap();
+        s.initialize().unwrap();
         assert!(s
             .record_provider_event("stripe", "evt_1", serde_json::json!({"type":"paid"}))
             .unwrap());
@@ -1506,9 +1774,7 @@ mod tests {
     #[test]
     fn clean_initialization_has_no_implicit_money_or_connections() {
         let s = MandateService::in_memory().unwrap();
-        let init = s
-            .initialize_instance("Alex Rivera", "Northstar Studio", "Primary treasury", false)
-            .unwrap();
+        let init = s.initialize_instance("Primary treasury", false).unwrap();
         assert!(s.balance(&init.account.id).unwrap().positions.is_empty());
         assert!(s
             .providers_for(&init.account.id)
@@ -1519,9 +1785,7 @@ mod tests {
     #[test]
     fn provider_connections_and_agents_are_account_scoped() {
         let s = MandateService::in_memory().unwrap();
-        let init = s
-            .initialize_instance("Alex Rivera", "Northstar Studio", "Primary treasury", false)
-            .unwrap();
+        let init = s.initialize_instance("Primary treasury", false).unwrap();
         let second = s.create_account("Research budget").unwrap();
         s.connect_demo_provider(&init.account.id, "stripe-revenue")
             .unwrap();
@@ -1563,9 +1827,7 @@ mod tests {
     #[test]
     fn disconnecting_demo_provider_removes_only_its_idle_position() {
         let s = MandateService::in_memory().unwrap();
-        let init = s
-            .initialize_instance("Owner", "Studio", "Treasury", false)
-            .unwrap();
+        let init = s.initialize_instance("Treasury", false).unwrap();
         s.connect_demo_provider(&init.account.id, "stripe-revenue")
             .unwrap();
         assert_eq!(s.balance(&init.account.id).unwrap().positions.len(), 1);
@@ -1574,5 +1836,128 @@ mod tests {
             .unwrap();
         assert_eq!(status.state, "not_connected");
         assert!(s.balance(&init.account.id).unwrap().positions.is_empty());
+    }
+
+    #[test]
+    fn capability_availability_separates_grant_from_provider_route() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize_instance("Treasury", false).unwrap();
+        let grants = vec!["checkout".into(), "transactions".into()];
+        let before = s.capabilities_for(&init.account.id, Some(&grants)).unwrap();
+        let checkout = before
+            .capabilities
+            .iter()
+            .find(|capability| capability.definition.id == "checkout")
+            .unwrap();
+        assert!(checkout.granted);
+        assert!(!checkout.available);
+        assert!(checkout
+            .unavailable_reason
+            .as_ref()
+            .unwrap()
+            .contains("Receive"));
+        assert!(
+            before
+                .capabilities
+                .iter()
+                .find(|capability| capability.definition.id == "transactions")
+                .unwrap()
+                .available
+        );
+
+        s.connect_demo_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        let after = s.capabilities_for(&init.account.id, Some(&grants)).unwrap();
+        let checkout = after
+            .capabilities
+            .iter()
+            .find(|capability| capability.definition.id == "checkout")
+            .unwrap();
+        assert!(checkout.available);
+        assert_eq!(checkout.environment.as_deref(), Some("sandbox"));
+        assert_eq!(checkout.provider_ids, vec!["stripe-revenue"]);
+    }
+
+    #[test]
+    fn capability_availability_respects_agent_grant() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let grants = vec!["balance".into()];
+        let capabilities = s.capabilities_for(&init.account.id, Some(&grants)).unwrap();
+        let pay = capabilities
+            .capabilities
+            .iter()
+            .find(|capability| capability.definition.id == "pay")
+            .unwrap();
+        assert!(!pay.granted);
+        assert!(!pay.available);
+        assert!(pay.unavailable_reason.as_ref().unwrap().contains("grant"));
+    }
+
+    #[test]
+    fn degraded_provider_does_not_make_capability_available() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize_instance("Treasury", false).unwrap();
+        s.connect_demo_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        s.db.lock()
+            .unwrap()
+            .execute(
+                "UPDATE provider_connections SET status='degraded' WHERE account_id=?1 AND provider_id='stripe-revenue'",
+                [&init.account.id],
+            )
+            .unwrap();
+
+        let capabilities = s.capabilities_for(&init.account.id, None).unwrap();
+        let checkout = capabilities
+            .capabilities
+            .iter()
+            .find(|capability| capability.definition.id == "checkout")
+            .unwrap();
+        assert!(!checkout.available);
+        assert!(checkout.provider_ids.is_empty());
+    }
+
+    #[test]
+    fn agent_creation_rejects_unknown_capability() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize().unwrap();
+        let error = s
+            .create_agent(AgentCreateRequest {
+                name: "unsafe".into(),
+                account_id: init.account.id,
+                authority: AuthorityMode::Independent,
+                capabilities: vec!["invent_money".into()],
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+    }
+
+    #[test]
+    fn operation_activity_names_capability_and_selected_provider() {
+        let s = MandateService::in_memory().unwrap();
+        let init = s.initialize_instance("Treasury", false).unwrap();
+        s.connect_demo_provider(&init.account.id, "stripe-revenue")
+            .unwrap();
+        s.create_money_operation(
+            "checkout",
+            MoneyRequest {
+                account_id: init.account.id,
+                amount: AtomicAmount::new("2000").unwrap(),
+                currency: "USD".into(),
+                provider: None,
+                idempotency_key: Some("playground".into()),
+                metadata: Default::default(),
+            },
+        )
+        .unwrap();
+        let event = s
+            .events_since(0)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.event_type == "checkout.created")
+            .unwrap();
+        assert_eq!(event.payload["capability"], "checkout");
+        assert_eq!(event.payload["provider"], "fake-revenue");
     }
 }

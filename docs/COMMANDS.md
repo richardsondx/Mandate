@@ -33,6 +33,20 @@ mandate transactions list --account <id> --json
 All mutation commands accept `--idempotency-key`. Reuse the same key when
 retrying the same intent.
 
+## Self-introspection
+
+```text
+mandate whoami --json
+```
+
+`whoami` calls `GET /v1/me` with the configured credential and returns the
+caller's identity without requiring an account id or capability. For an
+agent-scoped credential it returns `agent_id`, `name`, `runtime`, `account_id`,
+`account_name`, `authority`, `capabilities`, and grant `status`; for the local
+operator credential it returns `{"is_admin":true}`. Use it to discover the
+account and capabilities a credential is scoped to before calling other
+commands. No mutation, no account selection, no capability check.
+
 ## Administration
 
 ```text

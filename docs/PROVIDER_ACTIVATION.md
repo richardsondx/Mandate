@@ -2,7 +2,7 @@
 
 ## Coinbase CDP Server Wallet
 
-- Create a CDP project and server-wallet credentials.
+- Create a CDP project at `portal.cdp.coinbase.com/projects/api-keys` and generate API key credentials (API key ID and API key secret).
 - Configure an API-key-controlled smart account and provider policy.
 - Verify Base Sepolia USDC receive, balance, and transfer.
 - Before mainnet, review transfer policy, gas sponsorship, recovery, and finality.

@@ -1,9 +1,7 @@
-export const PROVIDER_PROTOCOL_VERSION = "1.0" as const;
+import type { Capability } from "./capabilities.generated.js";
+export type { Capability } from "./capabilities.generated.js";
 
-export type Capability =
-  | "treasury.balance" | "treasury.receive" | "treasury.transfer"
-  | "revenue.checkout" | "revenue.invoice" | "revenue.refund"
-  | "spending.card" | "spending.card.revoke";
+export const PROVIDER_PROTOCOL_VERSION = "1.0" as const;
 
 export type ConnectionState = "sandbox" | "live_ready" | "live" | "degraded" | "disconnected";
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };

@@ -33,10 +33,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    Init {
-        #[arg(long, default_value = "Mandate owner")]
-        name: String,
-    },
+    Init,
     Balance {
         #[arg(long, env = "MANDATE_ACCOUNT_ID")]
         account: String,
@@ -75,12 +72,20 @@ enum Command {
         command: Agents,
     },
     Status,
+    Whoami,
+    /// Discover capabilities executable for the current economic account.
+    Capabilities {
+        #[arg(long, env = "MANDATE_ACCOUNT_ID")]
+        account: Option<String>,
+    },
     Doctor,
     Dashboard,
     Daemon {
         #[command(subcommand)]
         command: Daemon,
     },
+    Move(MoveArgs),
+    Continuity(ContinuityArgs),
     Admin {
         #[command(subcommand)]
         command: Admin,
@@ -339,15 +344,13 @@ async fn main() -> ExitCode {
 async fn run(c: &Cli) -> Result<Value, CliError> {
     let a = Api::new(c);
     match &c.command {
-        Command::Init { name } => {
-            let result: InitResult = a
-                .call(Method::POST, "/v1/init", Some(json!({"name":name})))
-                .await?;
+        Command::Init => {
+            let result: InitResult = a.call(Method::POST, "/v1/init", Some(json!({}))).await?;
             let stored = store_admin_token(&result.admin_token);
             Ok(if stored {
-                json!({"principal":result.principal,"account":result.account,"admin_token_stored":"macos_keychain","keychain_service":"com.mandate.admin"})
+                json!({"account":result.account,"admin_token_stored":"macos_keychain","keychain_service":"com.mandate.admin"})
             } else {
-                json!({"principal":result.principal,"account":result.account,"admin_token":result.admin_token,"warning":"could not store administrator token in Keychain"})
+                json!({"account":result.account,"admin_token":result.admin_token,"warning":"could not store administrator token in Keychain"})
             })
         }
         Command::Balance { account } => {
@@ -453,6 +456,27 @@ async fn run(c: &Cli) -> Result<Value, CliError> {
             )
             .await
         }
+        Command::Move(x) => {
+            let quote_req = json!({
+                "account_id": x.account,
+                "amount": x.amount,
+                "source_provider": x.from,
+                "destination_provider": x.to,
+                "asset": x.asset
+            });
+            let quote: Value = a
+                .call(Method::POST, "/v1/movements/quote", Some(quote_req))
+                .await?;
+            a.call(Method::POST, "/v1/movements", Some(quote)).await
+        }
+        Command::Continuity(x) => {
+            a.call(
+                Method::GET,
+                &format!("/v1/continuity?account_id={}", x.account),
+                None,
+            )
+            .await
+        }
         Command::Refund {
             command:
                 Refund::Create {
@@ -514,6 +538,15 @@ async fn run(c: &Cli) -> Result<Value, CliError> {
             .await
         }
         Command::Status => a.call(Method::GET, "/health", None).await,
+        Command::Whoami => a.call(Method::GET, "/v1/me", None).await,
+        Command::Capabilities { account } => {
+            let query = account
+                .as_ref()
+                .map(|id| format!("?account_id={id}"))
+                .unwrap_or_default();
+            a.call(Method::GET, &format!("/v1/capabilities{query}"), None)
+                .await
+        }
         Command::Doctor
         | Command::Admin {
             command: Admin::Diagnostics,
@@ -666,8 +699,36 @@ fn load_admin_token() -> Option<String> {
             .output()
             .ok()?;
         if out.status.success() {
-            return String::from_utf8(out.stdout).ok().map(|s| s.trim().into());
+            let token = String::from_utf8(out.stdout).ok()?;
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
         }
+        None
     }
-    None
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+#[derive(Args)]
+struct MoveArgs {
+    #[arg(long, env = "MANDATE_ACCOUNT_ID")]
+    account: String,
+    #[arg(long)]
+    from: String,
+    #[arg(long)]
+    to: String,
+    #[arg(long)]
+    amount: String,
+    #[arg(long, default_value = "USD")]
+    asset: String,
+}
+
+#[derive(Args)]
+struct ContinuityArgs {
+    #[arg(long, env = "MANDATE_ACCOUNT_ID")]
+    account: String,
 }

@@ -11,12 +11,19 @@
   },
   "packageManager": "pnpm@10.22.0",
   "scripts": {
+    "generate:capabilities": "node scripts/generate-capabilities.mjs",
+    "check:capabilities": "node scripts/generate-capabilities.mjs --check",
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm check:capabilities && pnpm typecheck && pnpm test && pnpm build",
     "dev:web": "pnpm --dir web dev",
-    "dev:mcp": "pnpm --dir packages/mcp dev"
+    "dev:mcp": "pnpm --dir packages/mcp dev",
+    "dev:dashboard": "scripts/dev-dashboard.sh",
+    "build:web:watch": "pnpm --dir web build:watch",
+    "video:studio": "pnpm --dir video studio",
+    "video:render": "pnpm --dir video render",
+    "video:cover": "pnpm --dir video render:still"
   },
   "engines": {
     "node": ">=22"
