@@ -298,6 +298,4 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## Current scope
 
-The native menu-bar shell, browser credential presentation, Mandate Pay,
-third-party marketplace, public SDKs, bank transfers, and automatic
-cross-provider rebalancing are intentionally deferred.
+Bank transfers and automatic cross-provider rebalancing are intentionally deferred.
