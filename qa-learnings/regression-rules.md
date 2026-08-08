@@ -40,3 +40,31 @@
   offsetParent !== null filter, or use .nth(1) / .last instead of .first.
 **Apply when:** Writing Playwright scripts that click sidebar nav buttons.
 **Added:** 2026-08-08
+
+## Rule: UI text/condition must match actual setup state
+
+**Defect class:** UX — misleading blank state text
+**Learned from:** Human-found defect (2026-08-08)
+**Why QA missed it:** The Activity Live tab showed "Waiting for agent
+  activity…" even when no agents were connected, because the condition
+  checked provider connection status (demo providers count as connected)
+  rather than agent presence.
+**Check:** Blank state messages must reflect the actual user setup state.
+  When no agents exist, show "No activity yet" with guidance, not "Waiting
+  for activity" which implies activity is expected.
+**Apply when:** Any blank/empty state text or condition logic changes.
+**Added:** 2026-08-08
+
+## Rule: Keyboard shortcuts must use document capture phase
+
+**Defect class:** Interaction — keyboard shortcut not firing
+**Learned from:** Human-found defect (2026-08-08)
+**Why QA missed it:** The Cmd+K listener was on window in bubble phase.
+  In some browser/OS configurations, the event may not reach the window
+  bubble phase reliably. Moving to document with capture phase ensures
+  the handler fires before any other handlers can intercept.
+**Check:** Global keyboard shortcuts should use
+  document.addEventListener('keydown', handler, true) (capture phase)
+  rather than window.addEventListener('keydown', handler) (bubble phase).
+**Apply when:** Adding or modifying global keyboard shortcut handlers.
+**Added:** 2026-08-08
