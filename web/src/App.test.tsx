@@ -84,7 +84,7 @@ describe('Mandate dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Set up Primary account.' })).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'Capabilities' })[0])
     expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()
-    expect(screen.getByText('0 of 3 connected')).toBeInTheDocument()
+    expect(screen.getByText('0 of 3 rails active')).toBeInTheDocument()
     expect(screen.getAllByText('Not connected')).toHaveLength(4)
     fireEvent.click(screen.getByRole('button', { name: 'Add Receive provider' }))
     expect(await screen.findByRole('heading', { name: 'Add a receive provider' })).toBeInTheDocument()
@@ -271,15 +271,17 @@ describe('Mandate dashboard', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Guide' })[0])
     expect(await screen.findByRole('heading', { name: 'What can your agent do with Mandate?' })).toBeInTheDocument()
-    expect(screen.getByText('Earn money')).toBeInTheDocument()
-    expect(screen.getByText('Use earned capital')).toBeInTheDocument()
-    expect(screen.getByText('Manage customers')).toBeInTheDocument()
-    expect(screen.getByText('Understand finances')).toBeInTheDocument()
-    expect(screen.getByText('Operate autonomously')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Try economic autonomy' })).toBeInTheDocument()
+    expect(screen.getByText('Earn your first dollar')).toBeInTheDocument()
+    expect(screen.getByText('Spend what you earned')).toBeInTheDocument()
+    expect(screen.getByText('The $5 autonomy challenge')).toBeInTheDocument()
+    expect(screen.getByText('Pay your own bill')).toBeInTheDocument()
+    expect(screen.getByText('Start a tiny business')).toBeInTheDocument()
+    expect(screen.getByText('Get paid in crypto, spend on the web')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Copy there. Verify here.' })).toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole('button', { name: /Copy prompt/i })[0])
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Create a way for someone to pay me $20.'))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Create something useful that you can sell me for $3. Use Mandate to give me a way to pay you. Don\'t spend any money until you\'ve been paid.'))
     expect(await screen.findByRole('status')).toHaveTextContent('Prompt copied')
     expect(screen.getAllByText('checkout').length).toBeGreaterThan(0)
     expect(screen.getByText('Waiting for a matching request…')).toBeInTheDocument()
@@ -339,7 +341,7 @@ describe('Mandate dashboard', () => {
     expect(await screen.findByRole('heading', { name: 'Capabilities' })).toBeInTheDocument()
 
     // Deep-link banner should be present
-    expect(screen.getByText("Your capabilities are connected, but your money can't flow between all of them yet.")).toBeInTheDocument()
+    expect(screen.getByText("Your economic loop needs external setup.")).toBeInTheDocument()
     const deepLinkBtn = screen.getAllByRole('button', { name: /Close the loop/i })[0]
     expect(deepLinkBtn).toBeInTheDocument()
 
@@ -436,9 +438,11 @@ describe('Mandate dashboard', () => {
       />,
     )
 
-    expect(screen.getByText('10 of 10 capabilities available')).toBeInTheDocument()
+    expect(screen.getByText('11 of 11 capabilities available')).toBeInTheDocument()
     expect(screen.queryByText(/Agent connected$/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: 'How it works' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Reference' }))
+    expect(await screen.findByRole('heading', { name: 'Capability reference' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /checkout.*Accept a payment/i }))
     expect(await screen.findByRole('heading', { name: 'Accept a payment' })).toBeInTheDocument()
     expect(screen.getByText('Available now')).toBeInTheDocument()
     expect(screen.queryByText('Not executable yet')).not.toBeInTheDocument()
