@@ -516,7 +516,7 @@ function Activity({ data, events, source, viewLedger }: { data: DashboardData; e
                   {showRaw === eventId && <pre>{JSON.stringify({ id: event.id, event_type: event.eventType, created_at: event.createdAt, payload: event.payload }, null, 2)}</pre>}
                 </div>}
               </article>
-            }) : <div className="live-empty"><span className="live-radar"><i /></span><h2>Waiting for agent activity…</h2><p>Requests, route decisions, and provider responses will appear here in near real time.</p></div>}
+            }) : <div className="live-empty"><span className="live-radar"><i /></span><h2>{data.agents.length ? 'Waiting for agent activity…' : 'No activity yet'}</h2><p>{data.agents.length ? 'Requests, route decisions, and provider responses will appear here in near real time.' : 'Connect an agent in Agent Access to start generating economic events.'}</p></div>}
           </div>
         </section>
       ) : <>
@@ -597,8 +597,7 @@ function Agents({ data, connect, manage, testConnection }: { data: DashboardData
         <div><KeyRound size={19} /><span><strong>Credential files</strong><small>Stored outside prompt context</small></span></div>
       </div>
       <section className="panel agents-panel">
-        <div className="list-heading"><span>Agent</span><span>Allowed capabilities</span><span>Status & activity</span><span /></div>
-        {data.agents.length ? data.agents.map(agent => <AgentRow key={agent.id} agent={agent} onMore={manage} onTestConnection={testConnection} />) : <div className="empty-dialog"><Bot size={22} /><h3>No agents authorized for this account</h3><p>Connect OpenClaw, Hermes, or a custom agent with an account-scoped grant.</p><button className="primary-button" onClick={connect}>Connect agent</button></div>}
+        {data.agents.length ? <><div className="list-heading"><span>Agent</span><span>Allowed capabilities</span><span>Status & activity</span><span /></div>{data.agents.map(agent => <AgentRow key={agent.id} agent={agent} onMore={manage} onTestConnection={testConnection} />)}</> : <div className="empty-dialog"><Bot size={22} /><h3>No agents authorized for this account</h3><p>Connect OpenClaw, Hermes, or a custom agent with an account-scoped grant.</p><button className="primary-button" onClick={connect}>Connect agent</button></div>}
       </section>
     </div>
   )
@@ -1031,6 +1030,20 @@ export function App() {
     const timeout = window.setTimeout(() => setToast(''), 2800)
     return () => window.clearTimeout(timeout)
   }, [toast])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+        event.preventDefault()
+        setDialog(current => (current?.type === 'command' ? null : { type: 'command' }))
+      }
+      if (event.key === 'Escape' && dialog?.type) {
+        setDialog(null)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [dialog])
 
   const navigate = (id: NavId) => { setPage(id); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const openGuide = (tab: GuideTabId = 'start', providerFocus?: ProviderCategory) => {

@@ -1946,7 +1946,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .prompt-guide .section-heading { min-height: 44px; align-items: flex-end; }
 .prompt-guide .section-heading h2 { margin-top: 6px; line-height: 1.25; }
 .prompt-guide .section-heading + * { margin-top: -8px; }
-.prompt-guide .pill { min-height: 26px; padding: 4px 10px; line-height: 1.2; }
+.prompt-guide .pill { min-height: 26px; padding: 4px 10px; line-height: 1.2; justify-content: center; }
 .guide-live-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .guide-live-summary span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--muted); font-size: .68rem; background: var(--surface); }
 .intent-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -1972,13 +1972,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .autonomy-card h3 { margin: 0; font-size: 1.05rem; line-height: 1.3; }
 .autonomy-explanation { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
 .autonomy-prompt { margin: 0; padding: 12px 14px; border-left: 3px solid var(--green); border-radius: 0 8px 8px 0; background: var(--surface-alt); color: var(--ink); font-size: .82rem; line-height: 1.5; }
-.autonomy-card--featured .autonomy-prompt { background: rgba(255, 255, 255, .66); }
+.autonomy-card--featured .autonomy-prompt { background: rgba(255, 255, 255, .18); color: var(--ink); }
 .autonomy-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 2px; }
-.autonomy-budget { display: inline-flex; align-items: center; padding: 4px 9px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: .68rem; font-weight: 600; white-space: nowrap; }
+.autonomy-budget { display: inline-flex; align-items: center; padding: 4px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: .68rem; font-weight: 600; white-space: nowrap; }
 .autonomy-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.autonomy-tags code { padding: 3px 7px; border-radius: 5px; background: var(--surface-alt); color: var(--muted); font-size: .66rem; }
-.autonomy-card--featured .autonomy-tags code { background: rgba(255, 255, 255, .6); }
-.autonomy-missing { margin: 0; color: var(--muted); font-size: .7rem; }
+.autonomy-tags code { padding: 3px 7px; border-radius: 5px; background: var(--surface-alt); color: var(--faint); font-size: .66rem; }
+.autonomy-card--featured .autonomy-tags code { background: color-mix(in srgb, var(--green) 18%, var(--surface-alt)); color: var(--ink); }
+.autonomy-missing { margin: 0; color: var(--faint); font-size: .7rem; }
 .autonomy-needs { border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--line)); border-radius: 999px; background: var(--warning-soft); color: var(--ink); font-size: .66rem; font-weight: 600; padding: 3px 10px; cursor: pointer; }
 .autonomy-card > footer { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 4px; }
 .autonomy-card > footer .primary-button { margin: 0; }
@@ -2007,7 +2007,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .playbook-group + .playbook-group { margin-top: 8px; }
 .playbook-list { display: grid; gap: 8px; }
 .playbook-row { position: relative; display: grid; grid-template-columns: 1fr auto; align-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.playbook-main { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 16px; padding: 17px 58px 15px 18px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.playbook-main { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 16px; padding: 16px 58px 16px 18px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .playbook-main > span { display: flex; flex-direction: column; gap: 5px; }
 .playbook-main small { color: var(--muted); }
 .playbook-row blockquote { grid-column: 1 / -1; margin: 0; padding: 12px 58px 14px 18px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: .75rem; }
