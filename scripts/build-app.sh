@@ -25,7 +25,7 @@ pnpm -r --if-present build
 echo "› Compiling menu-bar app (Swift)…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -parse-as-library -framework AppKit -framework WebKit -framework Foundation \
+swiftc -O -parse-as-library -framework AppKit -framework WebKit -framework Foundation -framework UserNotifications \
   "$ROOT/packaging/app/MandateApp.swift" -o "$APP/Contents/MacOS/Mandate"
 
 echo "› Assembling Mandate.app…"

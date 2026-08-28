@@ -61,4 +61,8 @@ Do not use when The agent wants to send capital to an explicit external destinat
 Use when A settled incoming customer payment should be reversed.
 Do not use when The account is sending a new transfer unrelated to a customer payment.
 
+### swap
+Use when Idle capital should be deployed into another asset held by the same economic account.
+Do not use when Capital should move to an explicit external destination; use transfer. Or be turned into spendable purchasing power; use fund_spend.
+
 Run `mandate status --json` if the daemon appears unavailable and report the machine-readable error unchanged.

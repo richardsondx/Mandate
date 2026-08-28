@@ -44,5 +44,10 @@ else
 fi
 rm -f "$SPEC" 2>/dev/null || true
 
+# Publish to the local releases directory so the installed app can self-update.
+RELDIR="$HOME/.mandate/releases"
+mkdir -p "$RELDIR"
+cp "$FINAL" "$RELDIR/" 2>/dev/null && echo "  Published $FINAL → $RELDIR"
+
 echo "✓ Built $FINAL"
 echo "  Open with: open $FINAL"

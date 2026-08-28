@@ -22,3 +22,4 @@ mcp_servers:
         - fund_spend
         - get_funding_movement
         - refund_transaction
+        - swap_assets

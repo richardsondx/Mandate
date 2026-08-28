@@ -51,7 +51,11 @@ export const TOOL_GUIDANCE = {
   "refund_transaction": {
     "capability": "refund",
     "description": "Refund a settled revenue transaction. Use when A settled incoming customer payment should be reversed. Do not use when The account is sending a new transfer unrelated to a customer payment."
+  },
+  "swap_assets": {
+    "capability": "swap",
+    "description": "Convert one asset held by the economic account into another through a connected provider. Use when Idle capital should be deployed into another asset held by the same economic account. Do not use when Capital should move to an explicit external destination; use transfer. Or be turned into spendable purchasing power; use fund_spend."
   }
 } as const;
 
-export type EconomicCapability = "checkout" | "invoice" | "receive" | "balance" | "transactions" | "liquidity_status" | "pay" | "transfer" | "fund_spend" | "refund";
+export type EconomicCapability = "checkout" | "invoice" | "receive" | "balance" | "transactions" | "liquidity_status" | "pay" | "transfer" | "fund_spend" | "refund" | "swap";

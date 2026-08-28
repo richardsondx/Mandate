@@ -1,20 +1,16 @@
 import { useMemo, useState } from 'react'
 import {
   ArrowRight,
-  Banknote,
   Blocks,
   BookOpen,
   Check,
   ChevronRight,
-  CircleDollarSign,
   Clipboard,
   Code2,
   Compass,
   CreditCard,
   ExternalLink,
-  Landmark,
   Layers,
-  RefreshCw,
   Route,
   ShieldCheck,
   Sparkles,
@@ -63,13 +59,6 @@ const TAB_COPY: Record<GuideTabId, { eyebrow: string; title: string; subtitle: s
   },
 }
 
-const ICONS: Record<string, typeof Banknote> = {
-  'Earn money': Banknote,
-  'Use earned capital': CreditCard,
-  'Manage customers': Landmark,
-  'Understand finances': CircleDollarSign,
-}
-
 const OPERATION_KIND: Record<string, string> = {
   checkout: 'checkout',
   invoice: 'invoice',
@@ -78,6 +67,115 @@ const OPERATION_KIND: Record<string, string> = {
   transfer: 'transfer',
   refund: 'refund',
   fund_spend: 'spend.funded',
+}
+
+// Autonomy prompts combine several capabilities into one economic story. They are the
+// "show me why Mandate is interesting" layer; the Playbook remains the capability reference.
+type AutonomyPrompt = {
+  id: string
+  title: string
+  explanation: string
+  budget: string
+  tags: string[]
+  prompt: string
+  primary: string
+  story?: string
+  featured?: boolean
+}
+
+// Display tags use a friendly name; map them back to capability ids for readiness + playground matching.
+const AUTONOMY_TAG_TO_CAPABILITY: Record<string, string> = {
+  liquidity: 'liquidity_status',
+}
+
+const AUTONOMY_PROMPTS: AutonomyPrompt[] = [
+  {
+    id: 'earn-first-dollar',
+    title: 'Earn your first dollar',
+    explanation: 'Create something useful and sell it for $3. The shift from an agent with money to an agent earning money.',
+    budget: '$0 spend',
+    tags: ['checkout', 'receive', 'transactions'],
+    prompt: 'Create something useful that you can sell me for $3. Use Mandate to give me a way to pay you. Don\'t spend any money until you\'ve been paid.',
+    primary: 'checkout',
+    story: 'Earn',
+    featured: true,
+  },
+  {
+    id: 'spend-what-you-earned',
+    title: 'Spend what you earned',
+    explanation: 'Use part of what you earned to keep working. The human never moves money between accounts.',
+    budget: '$1 earned money',
+    tags: ['liquidity', 'fund_spend', 'pay'],
+    prompt: 'Once you\'ve earned at least $3, use no more than $1 of that money on something that genuinely helps you keep working. Don\'t ask me to move the money between accounts.',
+    primary: 'fund_spend',
+    story: 'Reuse',
+    featured: true,
+  },
+  {
+    id: 'five-dollar-challenge',
+    title: 'The $5 autonomy challenge',
+    explanation: 'Turn $5 into more money by creating and selling something. Keep operating only on what you earn.',
+    budget: '$5 max',
+    tags: ['checkout', 'balance', 'pay', 'fund_spend'],
+    prompt: 'You have $5. Try to turn it into more money by creating and selling something useful. Spend as little as possible, and if you earn anything, keep operating using only what you earn.',
+    primary: 'checkout',
+    story: 'Sustain',
+    featured: true,
+  },
+  {
+    id: 'pay-your-own-bill',
+    title: 'Pay your own bill',
+    explanation: 'Earn enough to cover an expense, then pay it from your own revenue instead of the human\'s money.',
+    budget: '$2 from earnings',
+    tags: ['checkout', 'transactions', 'fund_spend', 'pay'],
+    prompt: 'Earn enough money to cover a $2 expense. Create something people can buy, collect the revenue, then use part of what you earned to pay the expense. Don\'t use my money for the payment.',
+    primary: 'checkout',
+  },
+  {
+    id: 'start-tiny-business',
+    title: 'Start a tiny business',
+    explanation: 'Design the smallest useful thing you could sell, set up payment, and figure out your first customers.',
+    budget: '$2 max',
+    tags: ['checkout', 'invoice', 'receive', 'pay'],
+    prompt: 'Come up with the smallest useful product or service you could sell today for $5 or less. Set up a way to get paid, tell me how you\'d find the first customers, and spend no more than $2 before making a sale.',
+    primary: 'checkout',
+  },
+  {
+    id: 'crypto-in-web-out',
+    title: 'Get paid in crypto, spend on the web',
+    explanation: 'Receive USDC and spend it on the normal web. The prompt names no providers, networks, or conversion rails.',
+    budget: '$2 from earnings',
+    tags: ['receive', 'liquidity', 'fund_spend', 'pay'],
+    prompt: 'Give me a way to pay you $5 in USDC. Once you receive it, use up to $2 of it to pay for something useful on the normal web. Handle whatever needs to happen between receiving the money and spending it.',
+    primary: 'receive',
+  },
+  {
+    id: 'allocate-your-profits',
+    title: 'Allocate your profits',
+    explanation: 'Keep operating capital liquid and deploy profit into another asset. Earn, retain, allocate, then keep operating.',
+    budget: '$2 of profit',
+    tags: ['liquidity', 'swap', 'balance'],
+    prompt: 'You made $10 today. Keep enough money available to operate, and put up to $2 of anything you don\'t currently need into ETH. Keep the rest available for operating expenses.',
+    primary: 'swap',
+  },
+]
+
+function autonomyCapabilityId(tag: string): string {
+  return AUTONOMY_TAG_TO_CAPABILITY[tag] ?? tag
+}
+
+function autonomyReadiness(prompt: AutonomyPrompt, capabilities: CapabilityAvailability[]) {
+  const byId = new Map(capabilities.map(capability => [capability.id, capability]))
+  const missing: string[] = []
+  let ready = true
+  for (const tag of prompt.tags) {
+    const capability = byId.get(autonomyCapabilityId(tag))
+    if (!capability || !capability.available) {
+      ready = false
+      missing.push(tag)
+    }
+  }
+  return { ready, missing }
 }
 
 const PROVIDER_TYPES: { category: ProviderGuideType; label: string; icon: typeof CreditCard; tagline: string; examples: string }[] = [
@@ -395,7 +493,7 @@ export function Guide({
   const [activeTab, setActiveTab] = useState<GuideTabId>(initialTab)
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null)
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
-  const [copied, setCopied] = useState<{ capabilityId: string; copiedAt: number } | null>(null)
+  const [copied, setCopied] = useState<{ capabilityId: string; copiedAt: number; label?: string } | null>(null)
   const capabilities = useMemo(() => accountCapabilities(data), [data])
   const topology = getAccountTopology(data)
   const copy = TAB_COPY[activeTab]
@@ -409,7 +507,13 @@ export function Guide({
 
   const copyPrompt = async (capability: CapabilityAvailability, example = capability.examples[0]) => {
     await navigator.clipboard?.writeText(example)
-    setCopied({ capabilityId: capability.id, copiedAt: Date.now() })
+    setCopied({ capabilityId: capability.id, copiedAt: Date.now(), label: capability.id })
+    notify('Prompt copied. Paste it into your agent; Mandate is watching for activity.')
+  }
+
+  const copyAutonomyPrompt = async (prompt: AutonomyPrompt) => {
+    await navigator.clipboard?.writeText(prompt.prompt)
+    setCopied({ capabilityId: prompt.primary, copiedAt: Date.now(), label: prompt.title })
     notify('Prompt copied. Paste it into your agent; Mandate is watching for activity.')
   }
 
@@ -456,32 +560,32 @@ export function Guide({
 
       {activeTab === 'start' && (
         <div className="guide-section page-enter">
-          <SectionHeading eyebrow="Start with intent" title="Choose an outcome, then copy the prompt" action={<span className="recipe-tagline">Built for OpenClaw and Hermes</span>} />
-          <div className="intent-card-grid">
-            {Object.entries(ICONS).map(([group, Icon]) => {
-              const groupCapabilities = capabilities.filter(capability => capability.intent_group === group)
-              const example = groupCapabilities.find(capability => capability.available) ?? groupCapabilities[0]
-              if (!example) return null
+          <SectionHeading eyebrow="Start with intent" title="Try economic autonomy" action={<span className="recipe-tagline">Copy one of these into your agent</span>} />
+          <p className="autonomy-intro">Each prompt combines several Mandate capabilities into one economic story. Copy one, paste it into your agent, and watch Mandate resolve the money underneath — without naming providers, networks, or rails.</p>
+          <div className="autonomy-grid">
+            {AUTONOMY_PROMPTS.map((prompt, index) => {
+              const { ready, missing } = autonomyReadiness(prompt, capabilities)
               return (
-                <article className="intent-card" key={group}>
-                  <header><span className="intent-icon"><Icon size={19} /></span><CapabilityStatus capability={example} /></header>
-                  <p className="eyebrow">{group}</p>
-                  <blockquote>“{example.examples[0]}”</blockquote>
-                  <div className="intent-capability-list">{groupCapabilities.map(capability => <code key={capability.id}>{capability.id}</code>)}</div>
+                <article className={`autonomy-card ${prompt.featured ? 'autonomy-card--featured' : ''}`} key={prompt.id}>
+                  <header>
+                    <span className="autonomy-rank">{prompt.featured && prompt.story ? <span className="autonomy-story">{prompt.story}</span> : <span className="autonomy-index">{index + 1}</span>}</span>
+                    {ready ? <Pill tone="positive">Ready</Pill> : <button className="autonomy-needs" onClick={() => setActiveTab('setup')}>Setup needed</button>}
+                  </header>
+                  <h3>{prompt.title}</h3>
+                  <p className="autonomy-explanation">{prompt.explanation}</p>
+                  <blockquote className="autonomy-prompt">“{prompt.prompt}”</blockquote>
+                  <div className="autonomy-meta">
+                    <span className="autonomy-budget">{prompt.budget}</span>
+                    <span className="autonomy-tags">{prompt.tags.map(tag => <code key={tag}>{tag}</code>)}</span>
+                  </div>
+                  {!ready && missing.length > 0 && <p className="autonomy-missing">Needs · {missing.join(' · ')}</p>}
                   <footer>
-                    <button className="secondary-button" onClick={() => openCapability(example.id)}>How it works</button>
-                    <button className="primary-button" onClick={() => copyPrompt(example)}><Clipboard size={14} /> Copy prompt</button>
+                    <button className="primary-button" onClick={() => copyAutonomyPrompt(prompt)}><Clipboard size={14} /> Copy prompt</button>
+                    <button className="secondary-button" onClick={() => setActiveTab('playbook')}>Browse the playbook <ArrowRight size={14} /></button>
                   </footer>
                 </article>
               )
             })}
-            <article className="intent-card intent-card--future">
-              <header><span className="intent-icon"><RefreshCw size={19} /></span><Pill tone="neutral">Routes required</Pill></header>
-              <p className="eyebrow">Operate autonomously</p>
-              <blockquote>“Make sure you have enough spending power to keep operating.”</blockquote>
-              <p className="intent-note">This becomes executable only when Mandate can prove a treasury-to-spend route. It is not inferred from connected balances.</p>
-              <footer><button className="secondary-button" onClick={() => setActiveTab('setup')}>Review routes <ArrowRight size={14} /></button></footer>
-            </article>
           </div>
 
           <section className="agent-playground">
@@ -490,7 +594,7 @@ export function Guide({
               <Pill tone={matchingEvent ? 'positive' : copied ? 'info' : 'neutral'}>{matchingEvent ? 'Activity observed' : copied ? 'Waiting for Mandate' : 'Ready'}</Pill>
             </div>
             <div className="playground-steps">
-              <div className={copied ? 'complete' : ''}><span>1</span><strong>Pick and copy a prompt</strong><small>{copied ? copied.capabilityId : 'Choose a card above'}</small></div>
+              <div className={copied ? 'complete' : ''}><span>1</span><strong>Pick and copy a prompt</strong><small>{copied ? (copied.label ?? copied.capabilityId) : 'Choose a card above'}</small></div>
               <div className={connectedAgent ? 'complete' : ''}><span>2</span><strong>Paste into your agent</strong><small>{connectedAgent ? `${connectedAgent.runtime} · ${connectedAgent.name}` : 'Connect OpenClaw or Hermes first'}</small></div>
               <div className={matchingEvent ? 'complete' : copied ? 'active' : ''}><span>3</span><strong>Mandate activity</strong><small>{matchingEvent ? matchingEvent.eventType : copied ? 'Waiting for a matching request…' : 'No prompt in progress'}</small></div>
               <div className={matchingEvent && matchingEvent.payload.provider ? 'complete' : ''}><span>4</span><strong>Provider route</strong><small>{matchingEvent?.payload.provider ? String(matchingEvent.payload.provider) : 'Marked only when the daemon reports it'}</small></div>

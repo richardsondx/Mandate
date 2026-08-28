@@ -595,38 +595,59 @@ Always check balances before executing spend or transfer operations.`
             ))}
           </fieldset>
 
-          {(runtime === 'hermes' || runtime === 'openclaw') && (
-            <div className="instruction-block">
-              <p className="instruction-eyebrow">After creating the grant</p>
-              <p className="instruction-detail">Run the install command in your terminal. Mandate saves the credential file outside prompt context.</p>
-              <div className="instruction-actions">
-                <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
-                </button>
-                <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
-                  <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
-                </button>
+          {!result ? (
+            <div className="integration-instructions-panel">
+              <span className="eyebrow" style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {runtime === 'custom' ? 'Manual Setup' : 'Setup Flow'}
+              </span>
+              <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--muted)', lineHeight: '1.45' }}>
+                {runtime === 'custom' ? (
+                  <>Clicking <strong>Create grant</strong> will generate the credentials. You can then copy the configuration snippets below to set up your custom agent runtime manually.</>
+                ) : (
+                  <>Clicking <strong>Create grant</strong> will generate a secure access token on this Mac. After that, you can automatically register the Mandate MCP server with <strong>{runtime === 'hermes' ? 'Hermes' : 'OpenClaw'}</strong> by clicking <strong>Check for authenticated connection</strong>.</>
+                )}
+              </p>
+            </div>
+          ) : (
+            <div className="form-truth" style={{ flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
+                <ShieldCheck size={16} style={{ color: 'var(--green)' }} />
+                <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 600, color: 'var(--ink)' }}>
+                  Access Grant Created
+                </p>
               </div>
+
+              <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--muted)', lineHeight: '1.5' }}>
+                <strong>Credential File Saved:</strong> The authentication token has been securely stored on your local disk at:
+                <code style={{ wordBreak: 'break-all', display: 'block', margin: '4px 0', padding: '4px 8px', background: 'var(--surface)', borderRadius: '4px', border: '1px solid var(--line)', fontSize: '0.65rem', color: 'var(--ink)' }}>
+                  {String(result.credential_file)}
+                </code>
+              </p>
+
+              <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--muted)', fontStyle: 'italic', lineHeight: '1.4' }}>
+                💡 <strong>Why is this saved to a file?</strong> Storing the token on disk—outside the agent's LLM prompt context—keeps your account secure. The agent's LLM never sees the raw token (preventing accidental leakage), while the MCP server reads it directly from disk when invoking tools.
+              </p>
+
+              {runtime !== 'custom' ? (
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.7rem', color: 'var(--muted)', lineHeight: '1.45' }}>
+                  👉 Click <strong>Check for authenticated connection</strong> below to automatically register the Mandate MCP server in {runtime === 'hermes' ? 'Hermes' : 'OpenClaw'}.
+                </p>
+              ) : (
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.7rem', color: 'var(--muted)', lineHeight: '1.45' }}>
+                  👉 Use the configuration snippets below to integrate Mandate with your agent.
+                </p>
+              )}
             </div>
           )}
 
-          {runtime === 'custom' && (
-            <div className="instruction-actions">
-              <button className="secondary-button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
-                <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
-              </button>
-              <button className="secondary-button" onClick={() => copySnippet('skill', skillSnippet)}>
-                <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
-              </button>
-            </div>
-          )}
-
-          {result && (
-            <div className="form-truth form-truth--success">
-              <ShieldCheck size={16} />
-              <p><strong>Grant created:</strong> Credential file saved. Mandate is waiting for the external agent to authenticate via <code>mandate whoami</code> (CLI) or the <code>whoami</code> MCP tool.</p>
-            </div>
-          )}
+          <div className="instruction-actions" style={{ marginTop: '12px' }}>
+            <button className="secondary-button" type="button" onClick={() => copySnippet('mcp', mcpConfigSnippet)}>
+              <Copy size={13} /> {copiedKey === 'mcp' ? 'Copied MCP Config!' : 'Copy MCP config'}
+            </button>
+            <button className="secondary-button" type="button" onClick={() => copySnippet('skill', skillSnippet)}>
+              <Copy size={13} /> {copiedKey === 'skill' ? 'Copied Skill!' : 'Copy Mandate skill'}
+            </button>
+          </div>
 
           {error && <p className="form-error">{error}</p>}
 

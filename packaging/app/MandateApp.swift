@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UserNotifications
 import WebKit
 
 // Mandate macOS Application.
@@ -17,7 +18,7 @@ struct MandateApp {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem!
     private var daemon: Process?
     private var dashboardWindow: NSWindow?
@@ -27,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     private var daemonStatusMenuItem: NSMenuItem?
     private var mainDaemonStatusMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
+    private var mainUpdateMenuItem: NSMenuItem?
+    private var updateCheckTimer: Timer?
 
     private var bundleURL: URL { Bundle.main.bundleURL }
     private var mandatedURL: URL { bundleURL.appendingPathComponent("Contents/MacOS/mandated") }
@@ -53,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         startDaemon()
         openDashboard()
         NSApp.activate(ignoringOtherApps: true)
+
+        UNUserNotificationCenter.current().delegate = self
+        checkForUpdates()
+        updateCheckTimer = Timer.scheduledTimer(timeInterval: 1800, target: self, selector: #selector(checkForUpdates), userInfo: nil, repeats: true)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -106,6 +114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         menu.addItem(statusItem)
         menu.addItem(NSMenuItem.separator())
 
+        let updItem = NSMenuItem(title: "Checking for updates…", action: nil, keyEquivalent: "")
+        updItem.isEnabled = false
+        self.updateMenuItem = updItem
+        menu.addItem(updItem)
+        menu.addItem(makeItem("Check for Updates…", action: #selector(checkForUpdates), target: self))
+        menu.addItem(NSMenuItem.separator())
+
         menu.addItem(makeItem("Open Dashboard Window", action: #selector(openDashboard), target: self, key: "o"))
         menu.addItem(makeItem("Open in Browser", action: #selector(openInBrowser), target: self, key: "b"))
         menu.addItem(NSMenuItem.separator())
@@ -131,6 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "Mandate")
         appMenu.addItem(makeItem("About Mandate", action: #selector(showAbout), target: self))
+        let mainUpd = NSMenuItem(title: "Checking for updates…", action: nil, keyEquivalent: "")
+        mainUpd.isEnabled = false
+        self.mainUpdateMenuItem = mainUpd
+        appMenu.addItem(mainUpd)
+        appMenu.addItem(makeItem("Check for Updates…", action: #selector(checkForUpdates), target: self))
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(makeItem("Open Dashboard Window", action: #selector(openDashboard), target: self, key: "o"))
         appMenu.addItem(makeItem("Open in Default Browser", action: #selector(openInBrowser), target: self, key: "b"))
@@ -440,8 +460,208 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
 
-    // MARK: - Menu bar icon (canonical Mandate mark: three angled bars)
+    // MARK: - Self-update (local releases)
 
+    // The app is hosted locally: newer builds are published as `Mandate-<semver>.dmg`
+    // into ~/.mandate/releases/ (see scripts/build-dmg.sh). The menu surfaces an
+    // "Update Available" item and a system notification when a newer DMG is found;
+    // clicking either replaces /Applications/Mandate.app and relaunches.
+    private var releasesDirURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".mandate/releases")
+    }
+    private var stagingDirURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".mandate/staging")
+    }
+
+    private func currentVersion() -> String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+    }
+
+    private func parseSemver(_ s: String) -> (Int, Int, Int)? {
+        let parts = s.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return (parts[0], parts[1], parts[2])
+    }
+
+    /// Newest local DMG whose version is greater than the running app's version, if any.
+    private func latestLocalUpdate() -> (version: String, dmg: URL)? {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: releasesDirURL, includingPropertiesForKeys: nil) else { return nil }
+        let cur = parseSemver(currentVersion())
+        var best: (Int, Int, Int)? = nil
+        var bestVersion: String? = nil
+        var bestURL: URL? = nil
+        for item in items {
+            let name = item.lastPathComponent
+            guard name.hasPrefix("Mandate-"), name.hasSuffix(".dmg") else { continue }
+            let v = String(name.dropFirst("Mandate-".count).dropLast(".dmg".count))
+            guard let pv = parseSemver(v) else { continue }
+            if let c = cur, pv <= c { continue }
+            if best == nil || pv > best! {
+                best = pv
+                bestVersion = v
+                bestURL = item
+            }
+        }
+        guard let v = bestVersion, let u = bestURL else { return nil }
+        return (v, u)
+    }
+
+    @objc func checkForUpdates() {
+        DispatchQueue.global().async {
+            let update = self.latestLocalUpdate()
+            DispatchQueue.main.async { self.applyUpdateAvailability(update) }
+        }
+    }
+
+    private func applyUpdateAvailability(_ update: (version: String, dmg: URL)?) {
+        if let u = update {
+            updateMenuItem?.title = "● Update Available — \(u.version)"
+            updateMenuItem?.action = #selector(performUpdate)
+            updateMenuItem?.target = self
+            updateMenuItem?.isEnabled = true
+            mainUpdateMenuItem?.title = "Update Available (\(u.version))…"
+            mainUpdateMenuItem?.action = #selector(performUpdate)
+            mainUpdateMenuItem?.target = self
+            mainUpdateMenuItem?.isEnabled = true
+            postUpdateNotification(version: u.version)
+        } else {
+            let v = currentVersion()
+            updateMenuItem?.title = "Mandate is up to date (\(v))"
+            updateMenuItem?.action = nil
+            updateMenuItem?.isEnabled = false
+            mainUpdateMenuItem?.title = "Mandate is up to date (\(v))"
+            mainUpdateMenuItem?.action = nil
+            mainUpdateMenuItem?.isEnabled = false
+        }
+    }
+
+    private func postUpdateNotification(version: String) {
+        let last = UserDefaults.standard.string(forKey: "mandate.lastNotifiedUpdate") ?? ""
+        guard last != version else { return }
+        UserDefaults.standard.set(version, forKey: "mandate.lastNotifiedUpdate")
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Mandate \(version) is available"
+            content.body = "Click to update Mandate to the latest version."
+            content.userInfo = ["mandate.update.version": version]
+            let req = UNNotificationRequest(identifier: "mandate.update", content: content, trigger: nil)
+            center.add(req, withCompletionHandler: nil)
+        }
+    }
+
+    @objc func performUpdate() {
+        guard let update = latestLocalUpdate() else {
+            let a = NSAlert()
+            a.messageText = "Mandate is up to date"
+            a.informativeText = "No newer local release was found in ~/.mandate/releases/."
+            a.runModal()
+            return
+        }
+        let cur = currentVersion()
+        let a = NSAlert()
+        a.messageText = "Update Mandate to \(update.version)?"
+        a.informativeText = "Mandate will quit, install version \(update.version) from \(update.dmg.lastPathComponent), and relaunch. Current version is \(cur)."
+        a.addButton(withTitle: "Update")
+        a.addButton(withTitle: "Cancel")
+        if a.runModal() != .alertFirstButtonReturn { return }
+
+        DispatchQueue.global().async {
+            let ok = self.stageUpdate(from: update.dmg)
+            DispatchQueue.main.async {
+                if ok {
+                    self.runUpdateHelper()
+                } else {
+                    let err = NSAlert()
+                    err.messageText = "Update Failed"
+                    err.informativeText = "Could not prepare the update from \(update.dmg.lastPathComponent). See ~/.mandate/mandated.log and ~/.mandate/staging/."
+                    err.runModal()
+                }
+            }
+        }
+    }
+
+    /// Mount the DMG and copy its Mandate.app into the staging directory.
+    private func stageUpdate(from dmg: URL) -> Bool {
+        let fm = FileManager.default
+        try? fm.removeItem(at: stagingDirURL)
+        try? fm.createDirectory(at: stagingDirURL, withIntermediateDirectories: true)
+        let mountPoint = stagingDirURL.appendingPathComponent("mount")
+        try? fm.removeItem(at: mountPoint)
+        try? fm.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+
+        let attach = Process()
+        attach.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        attach.arguments = ["attach", "-nobrowse", "-mountpoint", mountPoint.path, dmg.path]
+        do { try attach.run() } catch { return false }
+        attach.waitUntilExit()
+        guard attach.terminationStatus == 0 else { return false }
+
+        let srcApp = mountPoint.appendingPathComponent("Mandate.app")
+        let stagedApp = stagingDirURL.appendingPathComponent("Mandate.app")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = [srcApp.path, stagedApp.path]
+        do { try ditto.run() } catch { _ = detachDmg(at: mountPoint); return false }
+        ditto.waitUntilExit()
+        _ = detachDmg(at: mountPoint)
+        return ditto.terminationStatus == 0 && fm.fileExists(atPath: stagedApp.path)
+    }
+
+    private func detachDmg(at mount: URL) -> Bool {
+        let d = Process()
+        d.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        d.arguments = ["detach", mount.path]
+        do { try d.run() } catch { return false }
+        d.waitUntilExit()
+        return d.terminationStatus == 0
+    }
+
+    /// Write a detached helper that swaps in the staged app and relaunches after this app quits.
+    private func runUpdateHelper() {
+        let fm = FileManager.default
+        let helper = stagingDirURL.appendingPathComponent("update.sh")
+        let script = "#!/bin/sh\n# Mandate self-update helper (generated). Replaces /Applications/Mandate.app and relaunches.\nsleep 1.5\nTRASH=\"$HOME/.mandate/trash\"\nmkdir -p \"$TRASH\"\nif [ -d \"/Applications/Mandate.app\" ]; then\n  mv \"/Applications/Mandate.app\" \"$TRASH/Mandate.app.$(date +%s)\" 2>/dev/null\nfi\nditto \"\(stagingDirURL.path)/Mandate.app\" \"/Applications/Mandate.app\"\nif [ -d \"/Applications/Mandate.app\" ]; then\n  open \"/Applications/Mandate.app\"\nfi\nrm -f \"$0\"\n"
+        do {
+            try script.write(to: helper, atomically: true, encoding: .utf8)
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        } catch {
+            let a = NSAlert()
+            a.messageText = "Update Failed"
+            a.informativeText = "Could not write the update helper: \(error.localizedDescription)"
+            a.runModal()
+            return
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = [helper.path]
+        p.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
+        p.standardError = FileHandle(forWritingAtPath: "/dev/null")
+        do { try p.run() } catch {
+            let a = NSAlert()
+            a.messageText = "Update Failed"
+            a.informativeText = "Could not start the update helper: \(error.localizedDescription)"
+            a.runModal()
+            return
+        }
+        // Quit; the detached helper finishes the swap and relaunches the new version.
+        NSApplication.shared.terminate(self)
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            DispatchQueue.main.async { self.performUpdate() }
+        }
+        completionHandler()
+    }
+
+    // MARK: - Menu bar icon (canonical Mandate mark: three angled bars)
     private func makeMenuIcon() -> NSImage {
         let size = NSSize(width: 25, height: 25)
         let image = NSImage(size: size)

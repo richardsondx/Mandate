@@ -1,8 +1,16 @@
 {
   "schema_version": 1,
-  "spec_version": "0.1.0",
-  "updated_at": "2026-08-07",
+  "spec_version": "0.2.0",
+  "updated_at": "2026-08-08",
   "releases": [
+    {
+      "version": "0.2.0",
+      "date": "2026-08-08",
+      "items": [
+        "Allocate capability family with swap primitive",
+        "Autonomy prompt gallery in the Guide"
+      ]
+    },
     {
       "version": "0.1.0",
       "date": "2026-08-07",
@@ -39,12 +47,14 @@
         "balance",
         "receive",
         "transfer",
-        "transactions"
+        "transactions",
+        "swap"
       ],
       "protocol_capabilities": [
         "treasury.balance",
         "treasury.receive",
-        "treasury.transfer"
+        "treasury.transfer",
+        "treasury.swap"
       ]
     },
     {
@@ -449,6 +459,44 @@
       ],
       "tools": [
         "refund_transaction"
+      ]
+    },
+    {
+      "id": "swap",
+      "title": "Allocate capital",
+      "intent_group": "Allocate capital",
+      "summary": "Convert one asset held by the economic account into another through a connected provider.",
+      "description": "Deploy idle capital into another asset, such as putting USDC into ETH, through a connected trading provider. The agent expresses intent; Mandate resolves the provider, quote, and execution, then reconciles the new balance.",
+      "direction": "within_account",
+      "examples": [
+        "Put $5 of my USDC into ETH.",
+        "Convert $10 of my available USDC to ETH.",
+        "You made $10 today. Keep $8 available for operating expenses and put $2 into ETH."
+      ],
+      "use_when": "Idle capital should be deployed into another asset held by the same economic account.",
+      "do_not_use_when": "Capital should move to an explicit external destination; use transfer. Or be turned into spendable purchasing power; use fund_spend.",
+      "requires_provider_categories": [
+        "Hold"
+      ],
+      "requires_provider_capabilities": [
+        "treasury.swap"
+      ],
+      "side_effect": "Submits an external swap through a connected trading provider and reconciles the new balance.",
+      "mutation": true,
+      "environments": [
+        "sandbox",
+        "live"
+      ],
+      "introduced": "0.2.0",
+      "updated": "2026-08-08",
+      "flow": [
+        "Agent states the source asset, amount, and target asset",
+        "Mandate checks swap access and available balance",
+        "A connected trading provider is selected and quoted",
+        "The swap is executed and the new balance is reconciled"
+      ],
+      "tools": [
+        "swap_assets"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 # Mandate capability reference
 
-Capability Spec 0.1.0 · Updated 2026-08-07
+Capability Spec 0.2.0 · Updated 2026-08-08
 
 Mandate capabilities are organized by what an operator asks an agent to accomplish. Run `mandate capabilities --json` or use `list_capabilities` to inspect what is executable for the current economic account.
 
@@ -213,4 +213,25 @@ Return all or part of a settled customer payment through the original Receive pr
 **Effect:** Submits an external refund against a settled transaction.
 
 Introduced in Mandate 0.1.0 · Updated 2026-08-07
+
+## Allocate capital
+
+`swap` · Allocate capital · Mutation
+
+Deploy idle capital into another asset, such as putting USDC into ETH, through a connected trading provider. The agent expresses intent; Mandate resolves the provider, quote, and execution, then reconciles the new balance.
+
+**Try saying**
+- “Put $5 of my USDC into ETH.”
+- “Convert $10 of my available USDC to ETH.”
+- “You made $10 today. Keep $8 available for operating expenses and put $2 into ETH.”
+
+**Use when:** Idle capital should be deployed into another asset held by the same economic account.
+
+**Do not use when:** Capital should move to an explicit external destination; use transfer. Or be turned into spendable purchasing power; use fund_spend.
+
+**Requires:** Hold provider
+
+**Effect:** Submits an external swap through a connected trading provider and reconciles the new balance.
+
+Introduced in Mandate 0.2.0 · Updated 2026-08-08
 
